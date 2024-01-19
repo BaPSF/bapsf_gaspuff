@@ -4,15 +4,16 @@ from sensirion_shdlc_sfc5xxx import Sfc5xxxShdlcDevice, Sfc5xxxScaling, \
     Sfc5xxxUnitTimeBase, Sfc5xxxMediumUnit
 import time
 
-with ShdlcSerialPort(port='***PORT NAME HERE***', baudrate=115200) as port:
-    device = Sfc5xxxShdlcDevice(ShdlcConnection(port), slave_address=0)
-
+with ShdlcSerialPort(port='/dev/ttyUSB0', baudrate=460800) as port:   
+    device = Sfc5xxxShdlcDevice(ShdlcConnection(port), slave_address=2)
+    
     # select calibration
-    device.activate_calibration(0)
-
+    print('activate calibration...')
+    device.activate_calibration(3)
+    
     # set units
     unit = Sfc5xxxMediumUnit(
-        Sfc5xxxUnitPrefix.MILLI,
+        Sfc5xxxUnitPrefix.ONE,
         Sfc5xxxUnit.STANDARD_LITER,
         Sfc5xxxUnitTimeBase.MINUTE
     )
@@ -21,19 +22,41 @@ with ShdlcSerialPort(port='***PORT NAME HERE***', baudrate=115200) as port:
 
     # read flow value for 10s
     # try with single value reading
+    print('start acquiring...')
+    
+    '''
     reading = []
     t = time.time()
-    for i in range(10000):
+    for i in range(300):
         t += 0.001
         reading.append(device.read_measured_value(Sfc5xxxScaling.USER_DEFINED))
-        time.sleep(max(0, t-time.time()))
-
+    print('execution time:', time.time()-t)
+    '''
+    
+    
     # an implementation with buffer reading
-    # read_time = []
-    # reading = []
-    # counter = 0
-    # while counter <= 10000:
-    #     buffer = device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
-    #     reading.extend(buffer.values)
-    #     read_time.extend([t * 0.001 for t in range(counter, counter + len(buffer.values))])
-    #     counter = len(reading)
+    read_time = []
+    reading = []
+    t = time.time()
+    buffer = device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED) # dump what's already inside the buffer
+    while len(reading) <= 3000:
+        buffer = device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
+        reading.extend(buffer.values)
+        if buffer.lost_values != 0:
+            print('lost values detected!')
+        #read_time.extend([t * 0.001 for t in range(counter, counter + len(buffer.values))])
+        #print(buffer.lost_values)
+    print('execution time:', time.time()-t)
+    
+    
+    output = open('flow_reading.txt', 'w', encoding='utf-8')
+    #output_time = open('sampling_time.txt', 'w', encoding='utf-8')
+    for r in reading:
+        output.write(str(r))
+        output.write("\n")
+    #for t in read_time:
+        #output_time.write(str(t))
+        #output_time.write("\n")
+    print('success')
+    output.close()
+    #output_time.close()
