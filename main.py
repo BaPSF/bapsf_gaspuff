@@ -4,6 +4,37 @@ from sensirion_shdlc_sfc5xxx import Sfc5xxxShdlcDevice, Sfc5xxxScaling, \
     Sfc5xxxUnitTimeBase, Sfc5xxxMediumUnit
 import time
 
+class FlowMeter():
+    def __init__(self, port='/dev/ttyUSB0', baudrate=460800, slave_address=2):
+        with ShdlcSerialPort(port=port, baudrate=baudrate) as p:
+            self.device = Sfc5xxxShdlcDevice(ShdlcConnection(p), slave_address=slave_address)
+            self.device.activate_calibration(3)
+            # set units
+            self.unit = Sfc5xxxMediumUnit(
+                Sfc5xxxUnitPrefix.ONE,
+                Sfc5xxxUnit.STANDARD_LITER,
+                Sfc5xxxUnitTimeBase.MINUTE
+            )
+            self.device.set_user_defined_medium_unit(self.unit)
+
+
+    def set_baudrate(self, baudrate):
+        self.device.set_baudrate(baudrate)
+
+
+    def set_slave_address(self, slave_address):
+        self.device.set_slave_address(slave_address)
+
+
+    def get_reading(self, duration):
+        reading = []
+        buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED) # dump what's already inside the buffer
+        while len(reading) <= duration * 1000:
+            buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
+            reading.extend(buffer.values)
+        return reading
+        
+'''
 with ShdlcSerialPort(port='/dev/ttyUSB0', baudrate=460800) as port:   
     device = Sfc5xxxShdlcDevice(ShdlcConnection(port), slave_address=2)
     
@@ -23,16 +54,6 @@ with ShdlcSerialPort(port='/dev/ttyUSB0', baudrate=460800) as port:
     # read flow value for 10s
     # try with single value reading
     print('start acquiring...')
-    
-    '''
-    reading = []
-    t = time.time()
-    for i in range(300):
-        t += 0.001
-        reading.append(device.read_measured_value(Sfc5xxxScaling.USER_DEFINED))
-    print('execution time:', time.time()-t)
-    '''
-    
     
     # an implementation with buffer reading
     read_time = []
@@ -60,3 +81,4 @@ with ShdlcSerialPort(port='/dev/ttyUSB0', baudrate=460800) as port:
     print('success')
     output.close()
     #output_time.close()
+'''
