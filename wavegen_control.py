@@ -101,8 +101,8 @@ class wavegen_control:
 		while retry_count < RETRIES:
 			try:
 				session = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-				session.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 0)
-				session.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, 0)
+				# session.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 0)
+				# session.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, 0)
 				session.connect((self.server_ip_addr,port))
 				break
 			except ConnectionRefusedError:

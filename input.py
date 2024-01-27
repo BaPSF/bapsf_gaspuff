@@ -25,7 +25,7 @@ def generate_pulse(pwf, lwf):
     '''
 
     n = int(len(lwf)/4)
-    pulse = numpy.concatenate((lwf[:n], pwf, lwf[n:]))
+    pulse = numpy.concatenate((lwf[n:], pwf, lwf[:n]))
    
     a = pulse.copy() * 4096
     a[pulse>8191] = 8191
@@ -53,8 +53,8 @@ length=[ENTER PULSE LENGTH HERE]
 units are sccm for flow rate and 
 Currently it only supports a single pulse but that can be extended to custom pulse configurations.
 '''
-wavegen = wavegen_control(server_ip_addr='192.168.1.12')
-voltage_level = [0, 1]
+wavegen = wavegen_control(server_ip_addr='192.168.1.13')
+voltage_level = [0, 3]
 freq = 1
 duty_cycle = .2
 pwf, lwf = init_norm(freq, duty_cycle)
