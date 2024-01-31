@@ -25,7 +25,7 @@ def generate_pulse(pwf, lwf):
     '''
 
     n = int(len(lwf)/4)
-    pulse = numpy.concatenate((lwf[n:], pwf, lwf[:n]))
+    pulse = numpy.concatenate((lwf[:n], pwf, lwf[n:]))
    
     a = pulse.copy() * 4096
     a[pulse>8191] = 8191
@@ -37,9 +37,12 @@ def send_pulse(agilent:wavegen_control, a, level):
 # Send array to agilent waveform generator VOLATILE
 # agilent -– class object been called upon
 # level – output voltage level  
-    agilent.send_dac_data(a.astype('>i2'))
-    agilent.function = 'USER' # updates waveform. see user manual
     agilent.voltage_level = level[0], level[1]
+    agilent.send_dac_data(a.astype('>i2'))
+    mode = ('USER', 10, 2, 0)
+    agilent.apply(mode)
+    # agilent.function = 'USER' # updates waveform. see user manual
+    # agilent.voltage_level = level[0], level[1]
     print('Waveform sent to agilent')
 
 
@@ -54,8 +57,8 @@ units are sccm for flow rate and
 Currently it only supports a single pulse but that can be extended to custom pulse configurations.
 '''
 wavegen = wavegen_control(server_ip_addr='192.168.1.13')
-voltage_level = [0, 3]
-freq = 1
+voltage_level = [2, 0]
+freq = 10
 duty_cycle = .2
 pwf, lwf = init_norm(freq, duty_cycle)
 data = generate_pulse(pwf, lwf)
