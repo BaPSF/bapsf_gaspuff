@@ -317,8 +317,10 @@ class wavegen_control:
 	'''
 	@function.setter
 	def function(self, func):
+		# ----- MODIFICATION -----
 		if func == 'USER':
 			self.send_text('FUNC:USER VOLATILE')
+		# ----- END MODIFICATION -----
 		self.send_text('FUNC ' + func)
 
 #-------------------------------------------------------

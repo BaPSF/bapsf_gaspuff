@@ -1,2 +1,3 @@
-.pdf
-venv/
+*.pdf
+.venv/
+.vscode/

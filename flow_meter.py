@@ -4,7 +4,7 @@ from sensirion_shdlc_sfc5xxx import Sfc5xxxShdlcDevice, Sfc5xxxScaling, \
     Sfc5xxxUnitTimeBase, Sfc5xxxMediumUnit
 import time
 
-class FlowMeter():
+class FlowMeter(object):
     def __init__(self, port='/dev/ttyUSB0', baudrate=460800, slave_address=2):
         with ShdlcSerialPort(port=port, baudrate=baudrate) as p:
             self.device = Sfc5xxxShdlcDevice(ShdlcConnection(p), slave_address=slave_address)
