@@ -27,11 +27,12 @@ class FlowMeter(object):
 
 
     def get_reading(self, duration):
-        reading = []
+        reading = [[], []]
         buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED) # dump what's already inside the buffer
         while len(reading) <= duration * 1000:
             buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
-            reading.extend(buffer.values)
+            reading[0].extend(buffer.sampling_time)
+            reading[1].extend(buffer.values)
         return reading
         
 '''
