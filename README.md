@@ -5,6 +5,7 @@ classDiagram
     Device -- PiezoValve
     Device -- Flowmeter
     Device -- PressureTransducer
+    Device -- TimeServer
 ```
 
 ```mermaid
@@ -17,15 +18,18 @@ flowchart LR
     psi[Pressure transducer] -->|ADC in| ADC
     end
 
+    Pi === ADC
+
     subgraph central[" "]
     in["input.txt"]-->Pi[Raspberry Pi]
     Pi-->out["output.csv"]
+    Pi.->|time data| out["output.csv"]
     flow[Flowmeter] -->|serial| Pi
     Trigger -->|GPIO pin| Pi
+    TimeServer --> Pi
     flow .->|data| out
     end
 
     in .->|data| out["output.txt"]
     psi .->|data| out
-    Pi --- ADC
 ```
