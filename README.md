@@ -11,7 +11,7 @@ classDiagram
 flowchart LR
     subgraph gas[gas puff]
     direction LR
-    ADC[AD/DA board] -->|write| amp[Amplifier]
+    ADC[AD/DA board] -->|DAC out| amp[Amplifier]
     amp --> piezo[Piezo valve]
     amp --> |X10 probe|scope
     psi[Pressure transducer] -->|read| ADC
@@ -20,12 +20,12 @@ flowchart LR
     subgraph central[" "]
     in["input.txt"]-->Pi[Raspberry Pi]
     Pi-->out["output.txt"]
-    Pi ---|serial| flow[Flowmeter]
-    Pi ---|GPIO pin| Trigger
+    flow[Flowmeter] -->|serial| Pi
+    Trigger -->|GPIO pin| Pi
     flow .-> out
     end
 
-    in .-> ADC
+    in .->|data| out["output.txt"]
     ADC .-> out
     Pi --- ADC
 ```
