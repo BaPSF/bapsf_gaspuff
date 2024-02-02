@@ -26,7 +26,7 @@ flowchart LR
     Pi.->|time data| out["output.csv"]
     flow[Flowmeter] -->|serial| Pi
     Trigger -->|GPIO pin| Pi
-    TimeServer --> Pi
+    TimeServer === Pi
     flow .->|data| out
     end
 
