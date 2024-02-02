@@ -13,19 +13,19 @@ flowchart LR
     direction LR
     ADC[AD/DA board] -->|DAC out| amp[Amplifier]
     amp --> piezo[Piezo valve]
-    amp --> |X10 probe|scope
-    psi[Pressure transducer] -->|read| ADC
+    amp --> |optional|scope
+    psi[Pressure transducer] -->|ADC in| ADC
     end
 
     subgraph central[" "]
     in["input.txt"]-->Pi[Raspberry Pi]
-    Pi-->out["output.txt"]
+    Pi-->out["output.csv"]
     flow[Flowmeter] -->|serial| Pi
     Trigger -->|GPIO pin| Pi
-    flow .-> out
+    flow .->|data| out
     end
 
     in .->|data| out["output.txt"]
-    ADC .-> out
+    psi .->|data| out
     Pi --- ADC
 ```
