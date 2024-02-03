@@ -1,5 +1,6 @@
 # bapsf_gaspuff
 
+flow meter api documentation: https://sensirion.github.io/python-shdlc-sfc5xxx/index.html
 ```mermaid
 classDiagram
     Device -- PiezoValve
