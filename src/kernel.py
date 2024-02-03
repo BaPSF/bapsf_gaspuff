@@ -2,14 +2,25 @@ import numpy as np
 import RPi.GPIO as GPIO
 import time
 #from wavegen_control import wavegen_control
-#from flow_meter import FlowMeter
+from flow_meter import FlowMeter
 #from input import generate_pulse
 
 class GasPuffController(object):
+    """
+    This class represents a high-level interface for controlling the flow reading system,
+    including triggering and data acquisition.
+    """
     def __init__(self, gpio_channel) -> None:
+        """
+        Initialize the flow reader system, including trigger box and flow meter connection.
+        
+        Parameters
+        ----------
+        gpio_channel : GPIO pin number for input of the trigger signal.
+        """
         # self.wavegen = wavegen_control(server_ip_addr='192.168.1.13')
-       # self.flow_meter = FlowMeter()
-        GPIO.setmode(GPIO.BCM)
+        self.flow_meter = FlowMeter()
+        GPIO.setmode(GPIO.BCM) # set GPIO indexing convention to BCM
         GPIO.setup(gpio_channel, GPIO.IN)
         self.gpio_channel = gpio_channel
 
@@ -29,19 +40,29 @@ class GasPuffController(object):
         
 
     def acquire(self, duration, acquisition_limit=1000):
+        """
+        Acquire flow rate measurements from the flow meter for a fixed duration at trigger.
+        Currently an upper limit of the number of acquisitions is in place.
+        
+        Parameters
+        ----------
+        duration : Duration of a single acquisition in seconds. This should not exceed the period of
+        plasma discharge to avoid malfunctioning.
+        acquisition_limit : Maximum number of acquisition the command can perform.
+        """
         shot_counts = 0
+        t = time.time()
         try:
             while shot_counts <= acquisition_limit:
                 print('waiting for signals...')
-                GPIO.wait_for_edge(self.gpio_channel, GPIO.RISING)
+                GPIO.wait_for_edge(self.gpio_channel, GPIO.RISING) # stop the code until receiving a trigger
+                readings = np.array(self.flow_meter.get_reading(duration))
+                np.savetxt(f'/home/pi/flow_meter/data/output_long_{shot_counts}.csv', readings)
+                print('shot count {}'.format(shot_counts))
+                print(f'shot interval {time.time()-t}')
                 t = time.time()
-                print(f'shot {shot_counts}')
-                GPIO.wait_for_edge(self.gpio_channel, GPIO.FALLING)
-                print(f'pulse length: {time.time()-t}')
-               # readings = np.array(self.flow_meter.get_reading(duration))
-               # np.savetxt('output.csv', readings)
                 shot_counts += 1
-        except KeyboardInterrupt():
+        except KeyboardInterrupt:
             GPIO.cleanup()
             print('exit on ctrl-C keyboard interrupt')
         except:
