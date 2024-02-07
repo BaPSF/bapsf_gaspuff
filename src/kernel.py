@@ -39,7 +39,7 @@ class GasPuffController(object):
        # self.wavegen.burst(enable=True, ncycles=ncycles, phase=0)
         
 
-    def acquire(self, duration, acquisition_limit=1000):
+    def acquire(self, duration, acquisition_limit=100):
         """
         Acquire flow rate measurements from the flow meter for a fixed duration at trigger.
         Currently an upper limit of the number of acquisitions is in place.
@@ -51,16 +51,18 @@ class GasPuffController(object):
         acquisition_limit : Maximum number of acquisition the command can perform.
         """
         shot_counts = 0
-        t = time.time()
         try:
             while shot_counts <= acquisition_limit:
                 print('waiting for signals...')
                 GPIO.wait_for_edge(self.gpio_channel, GPIO.RISING) # stop the code until receiving a trigger
-                readings = np.array(self.flow_meter.get_reading(duration))
-                np.savetxt(f'/home/pi/flow_meter/data/output_long_{shot_counts}.csv', readings)
+                #time.sleep(.1)
+                t = time.time()
+                #readings = np.array(self.flow_meter.get_reading(duration))
+                readings = np.array(self.flow_meter.get_reading_single_cycle(duration))
+                #readings = np.array(self.flow_meter.get_single_buffer())
+                np.savetxt(f'/home/pi/flow_meter/data/output_single_cycle_{shot_counts}.csv', readings)
                 print('shot count {}'.format(shot_counts))
                 print(f'shot interval {time.time()-t}')
-                t = time.time()
                 shot_counts += 1
         except KeyboardInterrupt:
             GPIO.cleanup()

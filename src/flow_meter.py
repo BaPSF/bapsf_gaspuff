@@ -55,8 +55,21 @@ class FlowMeter(object):
         #buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
         while len(reading) <= duration * 1000: # flow meter reads at 1kHz
             buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
-            print(buffer.sampling_time) # the only "time" returned from read buffer command
+            #print(buffer.sampling_time) # the only "time" returned from read buffer command
             reading.extend(buffer.values)
+        return reading
+    
+    def get_single_buffer(self):
+        #dump = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
+        buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED, max_reads=1)
+        return buffer.values
+    
+    def get_reading_single_cycle(self, duration):
+        reading = []
+        n = int(duration * 1000)
+        for i in range(n):
+            val = self.device.read_measured_value(Sfc5xxxScaling.USER_DEFINED)
+            reading.append(val)
         return reading
 
 # below is the standalone implementation of flow meter reading for reference
