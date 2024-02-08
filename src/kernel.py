@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 import RPi.GPIO as GPIO
 import time
 #from wavegen_control import wavegen_control
@@ -37,7 +38,7 @@ class GasPuffController(object):
 
    # def burst_mode(self, ncycles):
        # self.wavegen.burst(enable=True, ncycles=ncycles, phase=0)
-        
+
 
     def acquire(self, duration, acquisition_limit=100):
         """
@@ -51,6 +52,8 @@ class GasPuffController(object):
         acquisition_limit : Maximum number of acquisition the command can perform.
         """
         shot_counts = 0
+        fig, ax = plt.subplots()
+        line, = ax.plot(np.zeros(100))
         try:
             while shot_counts <= acquisition_limit:
                 print('waiting for signals...')
@@ -63,6 +66,9 @@ class GasPuffController(object):
                 np.savetxt(f'/home/pi/flow_meter/data/output_single_cycle_{shot_counts}.csv', readings)
                 print('shot count {}'.format(shot_counts))
                 print(f'shot interval {time.time()-t}')
+                line.set_ydata(readings)
+                fig.canvas.draw()
+                fig.canvas.flush_events()
                 shot_counts += 1
         except KeyboardInterrupt:
             GPIO.cleanup()
