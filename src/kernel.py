@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 import RPi.GPIO as GPIO
 import time
 #from wavegen_control import wavegen_control
@@ -51,24 +52,32 @@ class GasPuffController(object):
         acquisition_limit : Maximum number of acquisition the command can perform.
         """
         shot_counts = 0
+        plt.ion()
+        fig, ax = plt.subplots()
+        line, = ax.plot(np.zeros(int(duration*1000)))
+        ax.set_title('real time flow rate')
+        ax.set_ylabel('flow rate ('+self.flow_meter._unit.__str__()+')')
+        t = time.time()
         try:
             while shot_counts <= acquisition_limit:
                 print('waiting for signals...')
                 GPIO.wait_for_edge(self.gpio_channel, GPIO.RISING) # stop the code until receiving a trigger
                 #time.sleep(.1)
-                t = time.time()
-                #readings = np.array(self.flow_meter.get_reading(duration))
-                readings = np.array(self.flow_meter.get_reading_single_cycle(duration))
+                readings = np.array(self.flow_meter.get_reading(duration))
+                #readings = np.array(self.flow_meter.get_reading_single_cycle(duration))
                 #readings = np.array(self.flow_meter.get_single_buffer())
-                np.savetxt(f'/home/pi/flow_meter/data/output_single_cycle_{shot_counts}.csv', readings)
+                np.savetxt(f'/home/pi/flow_meter/data/0208/output_{shot_counts}.csv', readings)
                 print('shot count {}'.format(shot_counts))
                 print(f'shot interval {time.time()-t}')
+                t = time.time()
+                line.set_ydata(readings[:int(duration*1000)])
+                ax.set_ylim(0,max(readings)*1.2)
+                fig.canvas.draw()
+                fig.canvas.flush_events()
                 shot_counts += 1
+            print('Maximum number of shot records reached!')
         except KeyboardInterrupt:
-            GPIO.cleanup()
             print('exit on ctrl-C keyboard interrupt')
-        except:
-            GPIO.cleanup()
-            print('an error occured')
-        print('Maximum number of shot records reached!')
-        GPIO.cleanup()
+        except Exception as error:
+            print('an error occured:\n', error)
+        

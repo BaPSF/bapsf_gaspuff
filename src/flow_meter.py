@@ -23,12 +23,12 @@ class FlowMeter(object):
         self.device = Sfc5xxxShdlcDevice(ShdlcConnection(self.port), slave_address=slave_address)
         self.device.activate_calibration(3) # specify calibration file index in list; default now on Helium (3)
         # set units
-        self.unit = Sfc5xxxMediumUnit(
+        self._unit = Sfc5xxxMediumUnit(
             Sfc5xxxUnitPrefix.ONE,
             Sfc5xxxUnit.STANDARD_LITER,
             Sfc5xxxUnitTimeBase.MINUTE
         )
-        self.device.set_user_defined_medium_unit(self.unit)
+        self.device.set_user_defined_medium_unit(self._unit)
 
 
     def set_baudrate(self, baudrate):
@@ -54,7 +54,7 @@ class FlowMeter(object):
         # dump what's already inside the buffer. this is only useful for low overhead
         #buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
         while len(reading) <= duration * 1000: # flow meter reads at 1kHz
-            buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
+            buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED, max_reads=2)
             #print(buffer.sampling_time) # the only "time" returned from read buffer command
             reading.extend(buffer.values)
         return reading
