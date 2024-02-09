@@ -38,7 +38,7 @@ class GasPuffController(object):
 
    # def burst_mode(self, ncycles):
        # self.wavegen.burst(enable=True, ncycles=ncycles, phase=0)
-        
+
 
     def acquire(self, duration, acquisition_limit=100):
         """
@@ -52,12 +52,17 @@ class GasPuffController(object):
         acquisition_limit : Maximum number of acquisition the command can perform.
         """
         shot_counts = 0
+<<<<<<< HEAD
         plt.ion()
         fig, ax = plt.subplots()
         line, = ax.plot(np.zeros(int(duration*1000)))
         ax.set_title('real time flow rate')
         ax.set_ylabel('flow rate ('+self.flow_meter._unit.__str__()+')')
         t = time.time()
+=======
+        fig, ax = plt.subplots()
+        line, = ax.plot(np.zeros(100))
+>>>>>>> b958ecfa45898f915dbcd9bcc629f6a464d36aab
         try:
             while shot_counts <= acquisition_limit:
                 print('waiting for signals...')
@@ -69,9 +74,13 @@ class GasPuffController(object):
                 np.savetxt(f'/home/pi/flow_meter/data/0208/output_{shot_counts}.csv', readings)
                 print('shot count {}'.format(shot_counts))
                 print(f'shot interval {time.time()-t}')
+<<<<<<< HEAD
                 t = time.time()
                 line.set_ydata(readings[:int(duration*1000)])
                 ax.set_ylim(0,max(readings)*1.2)
+=======
+                line.set_ydata(readings)
+>>>>>>> b958ecfa45898f915dbcd9bcc629f6a464d36aab
                 fig.canvas.draw()
                 fig.canvas.flush_events()
                 shot_counts += 1
