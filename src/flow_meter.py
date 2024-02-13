@@ -7,7 +7,8 @@ import time
 class FlowMeter(object):
     """
     This class represents the flowmeter device and handles its I/O with the APIs provided by manufacturer
-    Sensirion."""
+    Sensirion.
+    """
     def __init__(self, port='/dev/ttyUSB0', baudrate=460800, slave_address=2):
         """
         Initialize connection to the flow meter and other configurations.
@@ -22,13 +23,69 @@ class FlowMeter(object):
         self.port = ShdlcSerialPort(port=port, baudrate=baudrate) # setup serial port
         self.device = Sfc5xxxShdlcDevice(ShdlcConnection(self.port), slave_address=slave_address)
         self.device.activate_calibration(3) # specify calibration file index in list; default now on Helium (3)
-        # set units
+        # set default units
         self._unit = Sfc5xxxMediumUnit(
             Sfc5xxxUnitPrefix.ONE,
             Sfc5xxxUnit.STANDARD_LITER,
             Sfc5xxxUnitTimeBase.MINUTE
         )
         self.device.set_user_defined_medium_unit(self._unit)
+
+
+    def set_units(self, prefix, unit, time_base):
+        """
+        Set units of output for the flow rate readings. The Sensirion driver has a set of conventions for
+        naming the units, and you can use the get_unit_convention() method to view the valid units.
+
+        Parameters
+        ----------
+        prefix : str
+            String literal of the unit prefix (MILLI, MICRO, KILO, etc.) Name has to match exactly with names of
+            the Sfx5xxxUnitPrefix enumerator items.
+        prefix : str
+            String literal of the medium units (STANDARD_LITER, BAR, etc.) Name has to match exactly with names of
+            the Sfx5xxxUnit enumerator items.
+        prefix : str
+            String literal of the unit time base (MILLISECOND, MINUTE, etc.) Name has to match exactly with names of
+            the Sfx5xxxUnitTimeBase enumerator items.
+        """
+        _prefix = None
+        _unit = None
+        _time_base = None
+        for item in Sfc5xxxUnitPrefix:
+            if item.name == prefix : _prefix = item
+        if _prefix == None : raise KeyError('Invalid unit prefix. Refer to get_unit_convention() for prefix names')
+        for item in Sfc5xxxUnit:
+            if item.name == unit : _unit = item
+        if _unit == None : raise KeyError('Invalid unit. Refer to get_unit_convention() for unit names')
+        for item in Sfc5xxxUnitTimeBase:
+            if item.name == time_base : _time_base = item
+        if _time_base == None : raise KeyError('Invalid time base. Refer to get_unit_convention() for time base names')
+
+        units = Sfc5xxxMediumUnit(_prefix, _unit, _time_base)
+        self.device.set_user_defined_medium_unit(units)
+
+
+    def get_unit_convention(self, category):
+        """
+        A helper method for getting available units for flow meter readings. You can use the 'name' string literals
+        to access and set units in the set_units() method.
+
+        Parameters
+        ----------
+        category : str
+            Category of units you want to view. Available options are 'prefix', 'unit', and 'time_base'.
+        """
+        if category == 'prefix':
+            for item in Sfc5xxxUnitPrefix:
+                print('name: ', item.name, ', description: ', item.description)
+        elif category == 'unit':
+            for item in Sfc5xxxUnit:
+                print('name: ', item.name, ', description: ', item.description)
+        elif category == 'time_base':
+            for item in Sfc5xxxUnitTimeBase:
+                print('name: ', item.name, ', description: ', item.description)
+        else: raise KeyError('Invalid unit category. Choose from prefix, unit, and time_base to view available units')
 
 
     def set_baudrate(self, baudrate):
@@ -72,52 +129,4 @@ class FlowMeter(object):
             reading.append(val)
         return reading
 
-# below is the standalone implementation of flow meter reading for reference
-'''
-with ShdlcSerialPort(port='/dev/ttyUSB0', baudrate=460800) as port:   
-    device = Sfc5xxxShdlcDevice(ShdlcConnection(port), slave_address=2)
-    
-    # select calibration
-    print('activate calibration...')
-    device.activate_calibration(3)
-    
-    # set units
-    unit = Sfc5xxxMediumUnit(
-        Sfc5xxxUnitPrefix.ONE,
-        Sfc5xxxUnit.STANDARD_LITER,
-        Sfc5xxxUnitTimeBase.MINUTE
-    )
 
-    device.set_user_defined_medium_unit(unit)
-
-    # read flow value for 10s
-    # try with single value reading
-    print('start acquiring...')
-    
-    # an implementation with buffer reading
-    read_time = []
-    reading = []
-    t = time.time()
-    buffer = device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED) # dump what's already inside the buffer
-    while len(reading) <= 3000:
-        buffer = device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
-        reading.extend(buffer.values)
-        if buffer.lost_values != 0:
-            print('lost values detected!')
-        #read_time.extend([t * 0.001 for t in range(counter, counter + len(buffer.values))])
-        #print(buffer.lost_values)
-    print('execution time:', time.time()-t)
-    
-    
-    output = open('flow_reading.txt', 'w', encoding='utf-8')
-    #output_time = open('sampling_time.txt', 'w', encoding='utf-8')
-    for r in reading:
-        output.write(str(r))
-        output.write("\n")
-    #for t in read_time:
-        #output_time.write(str(t))
-        #output_time.write("\n")
-    print('success')
-    output.close()
-    #output_time.close()
-'''
