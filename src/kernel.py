@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import RPi.GPIO as GPIO
 import time, os, shutil
+from datetime import datetime
 #from wavegen_control import wavegen_control
 from flow_meter import FlowMeter
 #from input import generate_pulse
@@ -90,8 +91,24 @@ class GasPuffController(object):
                 file_path = os.path.join(data_folder, f'output_{shot_counts}.csv')
 
                 print('waiting for signals...')
-                GPIO.wait_for_edge(self.gpio_channel, GPIO.RISING) # stop the code until receiving a trigger
-                readings = np.array(self.flow_meter.get_reading(duration))
+                try:
+                    GPIO.wait_for_edge(self.gpio_channel, GPIO.RISING) # stop the code until receiving a trigger
+                    readings = np.array(self.flow_meter.get_reading(duration))
+                except:
+                    print(f'Connection interrupted at {datetime.now().time()}. Trying to reconnect...')
+                    max_attempts = 3
+                    reconnection_attempt = 0
+                    while reconnection_attempt < max_attempts:
+                        try:
+                            time.sleep(10) # sleep for 10s before restarting connection
+                            self.flow_meter = FlowMeter()
+                            GPIO.wait_for_edge(self.gpio_channel, GPIO.RISING) # stop the code until receiving a trigger
+                            readings = np.array(self.flow_meter.get_reading(duration))
+                            break
+                        except Exception as e:
+                            print(f'Reconnection attempt {reconnection_attempt+1} failed. Reconnecting...')
+                            reconnection_attempt += 1
+                    print('Maximum reconnection attempt reached. Program terminate with error:\n', e)
                 
                 np.savetxt(file_path, readings)
                 print('shot count {}'.format(shot_counts))

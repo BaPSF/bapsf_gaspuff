@@ -64,6 +64,7 @@ class FlowMeter(object):
 
         units = Sfc5xxxMediumUnit(_prefix, _unit, _time_base)
         self.device.set_user_defined_medium_unit(units)
+        self._unit = units
 
 
     def get_unit_convention(self, category):
