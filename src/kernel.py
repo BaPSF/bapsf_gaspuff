@@ -84,9 +84,9 @@ class GasPuffController(object):
         t = time.time()
         try:
             while True:
-                if not self.check_disk_space(5, data_folder):  # Check for at least 5 MB of free space
-                    print("Insufficient disk space. Please free up space to continue.")
-                    break
+                #if not self.check_disk_space(required_space_mb=5.0, path=data_folder):  # Check for at least 5 MB of free space
+                    #print("Insufficient disk space. Please free up space to continue.")
+                    #break
 
                 file_path = os.path.join(data_folder, f'output_{shot_counts}.csv')
 
@@ -94,6 +94,9 @@ class GasPuffController(object):
                 try:
                     GPIO.wait_for_edge(self.gpio_channel, GPIO.RISING) # stop the code until receiving a trigger
                     readings = np.array(self.flow_meter.get_reading(duration))
+                except KeyboardInterrupt:
+                    print('exit on Ctrl-C keyboard interrupt')
+                    break
                 except:
                     print(f'Connection interrupted at {datetime.now().time()}. Trying to reconnect...')
                     max_attempts = 3
@@ -115,7 +118,8 @@ class GasPuffController(object):
                         print('Cnnection resumed')
                         pass
                     else:
-                        print('Maximum reconnection attempt reached. Program terminate with error:\n', e)
+                        print('Maximum reconnection attempt reached. Program terminate with above error.')
+                        break
                 
                 np.savetxt(file_path, readings)
                 print('shot count {}'.format(shot_counts))
