@@ -40,7 +40,7 @@ class GasPuffController(object):
    # def burst_mode(self, ncycles):
        # self.wavegen.burst(enable=True, ncycles=ncycles, phase=0)
 
-    def check_disk_space(required_space_mb, path="/"):
+    def check_disk_space(self, required_space_mb, path="/"):
         """
         Check if there is enough disk space available.
 
@@ -84,9 +84,9 @@ class GasPuffController(object):
         t = time.time()
         try:
             while True:
-                #if not self.check_disk_space(required_space_mb=5.0, path=data_folder):  # Check for at least 5 MB of free space
-                    #print("Insufficient disk space. Please free up space to continue.")
-                    #break
+                if not self.check_disk_space(required_space_mb=5.0, path=data_folder):  # Check for at least 5 MB of free space
+                    print("Insufficient disk space. Please free up space to continue.")
+                    break
 
                 file_path = os.path.join(data_folder, f'output_{shot_counts}.csv')
 
