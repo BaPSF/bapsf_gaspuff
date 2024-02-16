@@ -10,18 +10,26 @@
 
 WiFiServer server(80);
 
+// Global time variables
+unsigned long currentMillis = millis(); // current time, maybe not neccessary
+
+const unsigned long maxTimeout = 1000; // Maximum allowed timeout for client operation
+
 // Global variables for interrupt handling
-unsigned long currentMillis = millis();
 volatile bool interruptTriggered = false;
-unsigned long lastInterruptTime = 0; // Time of the last interrupt
-unsigned long prevInterruptTime = 0; // Time of the interrupt before the last one
-const int interruptPin = 2; // Example interrupt pin, adjust according to your setup
+unsigned long lastInterruptTime = 0;    // Time of the last interrupt
+unsigned long prevInterruptTime = 0;    // Time of the interrupt before the last one
+const int interruptPin = 2; // interrupt pin, adjust according to setup
 
 // Global variables for Analog write
-unsigned int signalDuration = 1000; // Duration for signal in milliseconds
+unsigned int signalDuration = 0; // Duration of high level in milliseconds
 unsigned int highLevel = 0;
 unsigned int lowLevel  = 0;
-int outputValue = 4096; // Example output value for 12-bit resolution
+unsigned int analogOutRes = 12; // Analog output resolution; 8 or 12-bit
+int maxAnalogOut = 4096; // Maximum output value for 12-bit resolution
+
+//============================================================
+//============================================================
 
 void setup() {
   //Initialize serial and wait for port to open:
@@ -43,7 +51,7 @@ void setup() {
   matrix.renderBitmap(frame, 8, 12);
 
   // Analog setup
-  analogWriteResolution(12); //change to 12-bit resolution
+  analogWriteResolution(analogOutRes); //change to 12-bit resolution
   analogWrite(A0, 0); // set output to zero, otherwise will float at some random voltage
 
   // Interrupt setup
@@ -70,11 +78,11 @@ void onInterrupt() {
 }
 
 void setOutputLevel() {
-  analogWrite(A0, outputValue);
+  analogWrite(A0, highLevel);
   LEDwink();
   matrix.renderBitmap(frame, 8, 12);
-  delay(500);
-  analogWrite(A0, 0);
+  delay(signalDuration);
+  analogWrite(A0, lowLevel);
   LEDleftEye();
   LEDrightEye();
   matrix.renderBitmap(frame, 8, 12);
@@ -93,47 +101,89 @@ unsigned long getTimeDifferenceBetweenInterrupts() {
   }
 }
 
-void clientOperation() {
+bool clientOperation() {
+  unsigned long maxSignalDuration = getTimeDifferenceBetweenInterrupts();
+  unsigned long timeout = min(maxSignalDuration-signalDuration, maxTimeout); // upper time limit for client operation
+  unsigned long initMillis = millis();
 
-  unsigned long timeout = (getTimeDifferenceBetweenInterrupts() - signalDuration);
+  // Check WiFi connection status and attempt to reconnect if necessary
+  if (initMillis - millis() > timeout && !checkAndReconnectWiFi()){
+    return false; // No WiFi connection, return early
+  }
 
   WiFiClient client = server.available();
-  if (client) {                             // if you get a client,
-    Serial.println("new client");           // print a message out the serial port
-    unsigned long initMillis = millis();
-    
-    while (client.connected()) { // loop while the client's connected
-      currentMillis = millis();  // update current time
-      char buf[100];             // make a buffer to hold incoming data from the client
-      if (client.available()) { // if there's bytes to read from the client,
-        // client.read takes two inputs--unsigned char* buffer and its size. Output size of the message received from client
-        int c = client.read((unsigned char*)buf, 99);
-        client.println("message received");
-        buf[c] = 0;          // message needs to be terminated with a zero
-        Serial.println(buf); // print message to serial window
-        if (!strchr(buf, ',')) {
-          client.println("Message wrong!");
-          break;
-        }
-
-        sscanf(buf, "%d,%d,%d", highLevel, lowLevel, signalDuration);
-        Serial.print("High Level = ");
-        Serial.println(highLevel);
-        Serial.print("Low Level = ");
-        Serial.println(lowLevel);
-        Serial.print("On time = ");
-        Serial.println(signalDuration);
-
-        break;
-
-      } else if (currentMillis - initMillis >= timeout) {
-          client.println("TIMEOUT");
-          break;
-        }
-    }
-    // close the connection:
-    client.stop();
-    Serial.println("client disonnected");
+  if (!client) {
+    return false; // No client is connected, return early
   }
-  
+
+  Serial.println("New client connected");
+  while (client.connected() && millis() - initMillis < timeout) {
+    
+    if (client.available()) {
+      char buf[101]; // Buffer to hold incoming data, increased by one for null terminator
+      int len = client.read((uint8_t*)buf, sizeof(buf) - 1); // Read data into buffer
+      if (len > 0) { // If data was read
+        buf[len] = '\0'; // Null-terminate the string
+        
+        int tempHighLevel, tempLowLevel, tempSignalDuration;
+        // Check for the correct message format and store values in temporary variables
+        if (sscanf(buf, "%d,%d,%d", &tempHighLevel, &tempLowLevel, &tempSignalDuration) != 3) {
+          client.println("Message format incorrect");
+          Serial.print("Format incorrect, message is "); Serial.println(buf);
+          client.stop();
+          return false; // Message wrong, return early
+        }
+
+        // Validate the range of each variable individually
+        bool rangeError = false;
+        if (tempHighLevel < 0 || tempHighLevel > 4096) {
+          client.println("HighLevel value out of range!");
+          Serial.println("HighLevel value out of range!");
+          rangeError = true;
+        }
+        if (tempLowLevel < 0 || tempLowLevel > 4096) {
+          client.println("LowLevel value out of range!");
+          Serial.println("LowLevel value out of range!");
+          rangeError = true;
+        }    
+        if (tempSignalDuration < 0 || tempSignalDuration > maxSignalDuration) {
+          client.println("SignalDuration value out of range!");
+          Serial.println("SignalDuration value out of range!");
+          rangeError = true;
+        }
+
+        if (rangeError) {
+          client.stop();
+          return false; // At least one value is out of range, return early
+        }
+
+        // If values are within range, update the global variables
+        highLevel = tempHighLevel;
+        lowLevel = tempLowLevel;
+        signalDuration = tempSignalDuration;
+
+        // Respond to the client
+        client.println("Message received and processed");
+        Serial.print("High Level = "); Serial.println(highLevel);
+        Serial.print("Low Level = "); Serial.println(lowLevel);
+        Serial.print("Signal Duration = "); Serial.println(signalDuration);
+
+        client.stop(); // Close the connection
+        Serial.println("Client disconnected");
+        return true; // Client message received successfully
+      }
+    }
+  }
+
+  if (!client.connected()) {
+    client.stop(); // Close the connection if not connected
+    Serial.println("Client disconnected due to lack of activity");
+  } else {
+    // Handling the case where the operation times out
+    client.println("Operation timed out");
+    client.stop();
+    Serial.println("Client disconnected due to timeout");
+  }
+
+  return false; // Return false if operation timed out or no data was received
 }
