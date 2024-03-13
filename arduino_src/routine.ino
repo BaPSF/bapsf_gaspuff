@@ -20,6 +20,8 @@ volatile bool interruptTriggered = false;
 unsigned long lastInterruptTime = 0;    // Time of the last interrupt
 unsigned long prevInterruptTime = 0;    // Time of the interrupt before the last one
 const int interruptPin = 2; // interrupt pin, adjust according to setup
+volatile unsigned long ISR_count = 0;
+volatile unsigned int loopCount = 0; // Loop count
 
 // Global variables for Analog write
 unsigned int signalDuration = 0; // Duration of high level in milliseconds
@@ -60,36 +62,32 @@ void setup() {
 }
 
 void loop() {
-  if (interruptTriggered) {
-    setOutputLevel();
-    interruptTriggered = false; // Reset the flag after handling the interrupt
-  } else {
+  if (!interruptTriggered) {
     clientOperation();
   }
 }
 
 void onInterrupt() {
-  prevInterruptTime = lastInterruptTime; // Store the previous interrupt time
-  lastInterruptTime = millis(); // Update the last interrupt time
+  analogWrite(A0, 1000);
+  __disable_irq();
+  ++ISR_count;
   interruptTriggered = true;
-
-  // Temporarily disable the interrupt
-  detachInterrupt(digitalPinToInterrupt(interruptPin));
-}
-
-void setOutputLevel() {
-  analogWrite(A0, highLevel);
   LEDwink();
   matrix.renderBitmap(frame, 8, 12);
-  delay(signalDuration);
-  analogWrite(A0, lowLevel);
+  
+  for (loopCount=0; loopCount < 128000; ++loopCount){
+  // 128000 = 25ms  ;
+  }
+
+  analogWrite(A0, 0);
   LEDleftEye();
   LEDrightEye();
   matrix.renderBitmap(frame, 8, 12);
 
-  // Re-enable the interrupt after handling to be ready for the next one
-  attachInterrupt(digitalPinToInterrupt(interruptPin), onInterrupt, FALLING);
+  __enable_irq();
+  interruptTriggered = false;
 }
+
 
 // Function to get the time difference between the previous two interrupts
 unsigned long getTimeDifferenceBetweenInterrupts() {
