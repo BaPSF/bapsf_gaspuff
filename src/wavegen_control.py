@@ -12,7 +12,7 @@ import sys
 if sys.version_info[0] < 3: raise RuntimeError('This script should be run under Python 3')
 
 import socket
-#import numpy
+import numpy as np
 import time
 
 
@@ -154,39 +154,26 @@ class wavegen_control:
 
 		s.close()
 
-		# Sleep 0.4s after each command
+		# Sleep 0.5s after each command
 		time.sleep(0.5)
 		#print(' | response is', response,'end')
 
 		return response
 
 	def send_dac_data(self, data):
-		# Data input in numpy array
-		# binary integer or decimal integer values from -8191 to +8191
-	
-		s = self.open_socket()
+		# Prepare the instrument for receiving the waveform data
+		self.send_text("DATA:VOL:CLE")  # Clear volatile memory
+		self.send_text("FUNC:USER VOLATILE")  # Specify the use of volatile memory
 
-		message = 'DATA:DAC VOLATILE, #5%05i'%(data.size*2)
-		response = 'No response'
+		# Define the waveform data points (assuming 'data_normalized' is your NumPy array)
+		waveform_data = ','.join(map(str, data))
 
-		try:
-			s.send(message.encode())
-			s.send(data.tobytes())
-#			s.send('\n'.encode())
-			# get response if the command is a question
-		except TimeoutError:
-			print('socket opened but sending command time out. check command.')
-		except KeyboardInterrupt:
-			print('\n______Halted due to Ctrl-C______')
+		# Download the waveform to the instrument's volatile memory
+		self.send_text(f"DATA VOLATILE, {waveform_data}")
 
-		s.close()
+		# Set the function generator to use the uploaded arbitrary waveform
+		self.send_text("FUNC:SHAP USER")
 
-		# Sleep 0.4s after each command
-#		time.sleep(0.5)
-		#print(' | response is', response,'end')
-#		response = self.send_text('FUNC USER')
-
-		return response
 
 #-------------------------------------------------------
 	'''
@@ -202,8 +189,10 @@ class wavegen_control:
 	def output(self, out):
 		if out == 1:
 			self.send_text('OUTP ON')
-		else:
+		elif out == 0:
 			self.send_text('OUTP OFF')
+		else:
+			print('Unknown input parameter')
 			
 
 #-------------------------------------------------------
@@ -331,14 +320,14 @@ class wavegen_control:
 	def pulse_width(self):
 		resp = self.send_text('FUNC:PULS:WIDT?')
 		return(resp)
-	
+
 	'''
 	set output function with default parameters
 	'''
 	@pulse_width.setter
 	def pulse_width(self, width):
 		self.send_text('FUNC:PULS:WIDT ' + str(width))
-		
+
 #-------------------------------------------------------
 	'''
 	Set pulse period in units of seconds
@@ -385,22 +374,15 @@ class wavegen_control:
 	def system_error(self):
 		return self.send_text('SYST:ERR?')
 
+	def gen_prog_wf():
+
+		w0 = np.zeros(1000)
+
+
 #----------------------FOR TEST---------------------------------#
 if __name__ == '__main__':
 	#reply = 'none'
-	keysight = wavegen_control(server_ip_addr = '192.168.0.106')
-	agilent = wavegen_control(server_ip_addr = '192.168.0.104')
+	wavegen = wavegen_control(server_ip_addr = '192.168.0.106')
 	
-	keysight.DCoffset = 0
-	
-#	keysight.send_text('DATA:ATTR:POIN?')
-	#funcnow = agilent.function
-	#print('current:', funcnow)
-#	agilent.function='SIN'
-#	time.sleep(4)
-#	agilent.set_output(False)
-	#agilent.function='RAMP'
-	#time.sleep(0.4)
-	#funcnext = agilent.function()
-	#print('after change:', funcnext)
-	
+	wavegen.DCoffset = 0
+
