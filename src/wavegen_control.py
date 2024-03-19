@@ -161,6 +161,7 @@ class wavegen_control:
 		return response
 
 	def send_dac_data(self, data):
+
 		# Prepare the instrument for receiving the waveform data
 		self.send_text("DATA:VOL:CLE")  # Clear volatile memory
 		self.send_text("FUNC:USER VOLATILE")  # Specify the use of volatile memory
@@ -173,6 +174,7 @@ class wavegen_control:
 
 		# Set the function generator to use the uploaded arbitrary waveform
 		self.send_text("FUNC:SHAP USER")
+
 
 
 #-------------------------------------------------------
@@ -256,7 +258,7 @@ class wavegen_control:
 
 	@frequency.setter
 	def frequency(self, freq):
-		self.send_text('FREQ'+str(freq))
+		self.send_text('FREQ '+str(freq))
 
 #-------------------------------------------------------
 
