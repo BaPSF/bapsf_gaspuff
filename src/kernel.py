@@ -1,11 +1,11 @@
 import numpy as np
-import RPi.GPIO as GPIO
+#import RPi.GPIO as GPIO
 import time
-from flow_meter import FlowMeter
+#from flow_meter import FlowMeter
 from wavegen_control import wavegen_control
 
 from input import generate_pulse_waveform
-
+'''
 class FlowMeter(object):
     """
     This class represents a high-level interface for controlling the flow reading system,
@@ -73,24 +73,28 @@ class FlowMeter(object):
             print('an error occured')
         print('Maximum number of shot records reached!')
         GPIO.cleanup()
-
+'''
 
 class GasPuffValve(object):
 
-    def __init__(self, ip_address, puff_time, high_voltage, low_voltage) -> None:
+    def __init__(self, ip_address) -> None:
         if ip_address is None:
             raise ValueError('IP address must be provided.')
         # Connect to waveform generator
         self.wavegen = wavegen_control(server_ip_addr='192.168.0.106')
+        self.puff_time = 10
+        self.high_voltage = 0
+        self.low_voltage = 0
 
+    def program_waveform(self):
         # Turn off output before applying initial settings
         self.wavegen.output = 0
         data = generate_pulse_waveform() # Define Arbitrary waveform shape
         self.wavegen.send_dac_data(data)
 
-        self.wavegen.frequency = 1 / (2 * puff_time * 1e-3) # factor of 2 due to the way waveform shape is written; check generate_pulse_waveform()
+        self.wavegen.frequency = 1 / (2 * self.puff_time * 1e-3) # factor of 2 due to the way waveform shape is written; check generate_pulse_waveform()
         self.wavegen.burst(True, 1, 180)
-        self.wavegen.voltage_level = (high_voltage, low_voltage)
+        self.wavegen.voltage_level = (self.high_voltage, self.low_voltage)
     
     @property
     def high_voltage(self):
