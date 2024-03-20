@@ -74,6 +74,7 @@ class FlowMeter(object):
         print('Maximum number of shot records reached!')
         GPIO.cleanup()
 
+
 class GasPuffValve(object):
 
     def __init__(self, ip_address, puff_time, high_voltage, low_voltage) -> None:
@@ -127,5 +128,13 @@ class GasPuffValve(object):
 
     @puff_time.setter
     def puff_time(self, value):
-	# factor of 2 due to the way waveform shape is written; check generate_pulse_waveform()
-	wavegen.frequency = 1 / (2 * value * 1e-3)
+    	# factor of 2 due to the way waveform shape is written; check generate_pulse_waveform()
+    	self.wavegen.frequency = 1 / (2 * value * 1e-3)
+
+
+
+#-------------------------------------------------------#
+
+if __name__ == '__main__':
+    gpc = FlowMeter(gpio_channel=5)
+    gpc.acquire(0.3)
