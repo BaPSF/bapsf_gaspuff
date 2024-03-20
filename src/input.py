@@ -5,8 +5,9 @@ Creation date: Mar-16-2024
 '''
 
 import numpy as np
-from wavegen_control import wavegen_control
 import time
+from wavegen_control import wavegen_control
+
 
 def generate_pulse_waveform():
 	cycle_length = 16384  # Number of points in one cycle
@@ -29,23 +30,6 @@ def generate_pulse_waveform():
 
 	return data_normalized
 
-def init(wavegen, high_voltage, low_voltage, puff_time):
-    wavegen.output = 0
-    data = generate_pulse_waveform() # Define Arbitrary waveform shape
-    wavegen.send_dac_data(data)
-
-    wavegen.frequency = 1 / (2 * puff_time * 1e-3) # factor of 2 due to the way waveform shape is written; check generate_pulse_waveform()
-    wavegen.burst(True, 1, 180)
-    wavegen.voltage_level = (high_voltage, low_voltage)
-    
-    # User prompt for confirmation
-    confirm = input("Proceed with enabling output? (Y/N): ").strip().upper()
-    if confirm == 'Y':
-        wavegen.output = 1
-        print("Output enabled.")
-    else:
-        print("Operation canceled, output remains disabled.")
-
 
 #-------------------------------------------------------#
 
@@ -54,9 +38,3 @@ if __name__ == '__main__':
 	wavegen = wavegen_control(server_ip_addr = '192.168.0.106')
 	
 #	init(wavegen, 1.5, -1, 20)
-	# wavegen.output = 0
-	# wavegen.voltage_level = (1, 0.25)
-	# wavegen.output = 1
-
-	# puff_time = 10
-	# wavegen.frequency = 1 / (2 * puff_time * 1e-3)

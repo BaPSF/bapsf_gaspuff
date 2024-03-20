@@ -1,11 +1,12 @@
 import numpy as np
 import RPi.GPIO as GPIO
 import time
-#from wavegen_control import wavegen_control
 from flow_meter import FlowMeter
-#from input import generate_pulse
+from wavegen_control import wavegen_control
 
-class GasPuffController(object):
+from input import generate_pulse_waveform
+
+class FlowMeter(object):
     """
     This class represents a high-level interface for controlling the flow reading system,
     including triggering and data acquisition.
@@ -72,3 +73,59 @@ class GasPuffController(object):
             print('an error occured')
         print('Maximum number of shot records reached!')
         GPIO.cleanup()
+
+class GasPuffValve(object):
+
+    def __init__(self, ip_address, puff_time, high_voltage, low_voltage) -> None:
+        if ip_address is None:
+            raise ValueError('IP address must be provided.')
+        # Connect to waveform generator
+        self.wavegen = wavegen_control(server_ip_addr='192.168.0.106')
+
+        # Turn off output before applying initial settings
+        self.wavegen.output = 0
+        data = generate_pulse_waveform() # Define Arbitrary waveform shape
+        self.wavegen.send_dac_data(data)
+
+        self.wavegen.frequency = 1 / (2 * puff_time * 1e-3) # factor of 2 due to the way waveform shape is written; check generate_pulse_waveform()
+        self.wavegen.burst(True, 1, 180)
+        self.wavegen.voltage_level = (high_voltage, low_voltage)
+    
+    @property
+    def high_voltage(self):
+        return self._high_voltage
+
+    @high_voltage.setter
+    def high_voltage(self, value):
+        if value < 0:
+            high_voltage = 0
+        if value < self.low_voltage:
+            print("High voltage is lower than low voltage.")
+
+        self.wavegen.output = 0
+        self.wavegen.voltage_level = (value, self.low_voltage)
+        self.wavegen.output = 1
+
+    @property
+    def low_voltage(self):
+        return self._low_voltage
+
+    @low_voltage.setter
+    def low_voltage(self, value):
+        if value < 0:
+            low_voltage = 0
+        if value > self.high_voltage:
+            print("Low voltage is higher than high voltage.")
+
+        self.wavegen.output = 0
+        self.wavegen.voltage_level = (self.high_voltage, value)
+        self.wavegen.output = 1
+
+    @property
+    def puff_time(self):
+        return self._puff_time
+
+    @puff_time.setter
+    def puff_time(self, value):
+	# factor of 2 due to the way waveform shape is written; check generate_pulse_waveform()
+	wavegen.frequency = 1 / (2 * value * 1e-3)
