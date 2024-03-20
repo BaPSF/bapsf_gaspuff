@@ -30,7 +30,7 @@ def update_puff_time():
 # Create the main window
 window = tk.Tk()
 window.title("Waveform Control")
-window.geometry("400x300")
+window.geometry("400x500")
 
 # Create the widgets
 ip_address_label = tk.Label(window, text="IP Address:")
