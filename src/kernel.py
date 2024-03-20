@@ -83,7 +83,8 @@ class GasPuffValve(object):
 		# Connect to waveform generator
 		self.wavegen = wavegen_control(server_ip_addr='192.168.0.106')
 		self._puff_time = 10
-		self._high_voltage, self._low_voltage = self.wavegen.voltage_level
+		self._high_voltage = 0
+		self._low_voltage = 0
 
 	def program_waveform(self):
 		# Turn off output before applying initial settings
@@ -94,33 +95,41 @@ class GasPuffValve(object):
 	
 	@property
 	def high_voltage(self):
+		hi, lo = self.wavegen.voltage_level
+		self._high_voltage = hi
 		return self._high_voltage
 
 	@high_voltage.setter
 	def high_voltage(self, value):
 		if value < 0:
-			high_voltage = 0
+			value = 0
 		if value < self._low_voltage:
 			print("High voltage is lower than low voltage.")
 
 		self.wavegen.output = 0
-		self.wavegen.voltage_level = (value, self.low_voltage)
+		self.wavegen.voltage_level = (value, self._low_voltage)
 		self.wavegen.output = 1
+
+		self._high_voltage = value
 
 	@property
 	def low_voltage(self):
+		hi, lo = self.wavegen.voltage_level
+		self._low_voltage = lo
 		return self._low_voltage
 
 	@low_voltage.setter
 	def low_voltage(self, value):
 		if value < 0:
-			low_voltage = 0
+			value = 0
 		if value > self._high_voltage:
 			print("Low voltage is higher than high voltage.")
 
 		self.wavegen.output = 0
 		self.wavegen.voltage_level = (self.high_voltage, value)
 		self.wavegen.output = 1
+
+		self._low_voltage = value
 
 	@property
 	def puff_time(self):
@@ -132,7 +141,8 @@ class GasPuffValve(object):
 		self.wavegen.frequency = 1 / (2 * value * 1e-3)
 		self._puff_time = value
 
-
+	def set_output(self,i):
+		self.wavegen.output = i
 
 #-------------------------------------------------------#
 

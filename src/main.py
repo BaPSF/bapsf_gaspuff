@@ -12,10 +12,10 @@ def init_waveform():
     gas_puff_valve.program_waveform()
 
 def enable_output():
-    gas_puff_valve.wavegen.output = 0
+    gas_puff_valve.set_output(1)
 
 def disable_output():
-    gas_puff_valve.wavegen.output = 1
+    gas_puff_valve.set_output(0)    
 
 def update_high_voltage():
     gas_puff_valve.high_voltage = float(high_voltage_entry.get())

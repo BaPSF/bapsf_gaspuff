@@ -224,7 +224,7 @@ class wavegen_control:
 
 	@amplitude.setter
 	def amplitude(self, amp):
-		self.send_text('VOLT'+str(amp))
+		self.send_text('VOLT '+str(amp))
 
 #-------------------------------------------------------
 	'''
