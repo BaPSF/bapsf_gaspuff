@@ -18,10 +18,17 @@ def disable_output():
     gas_puff_valve.set_output(0)    
 
 def update_high_voltage():
-    gas_puff_valve.high_voltage = float(high_voltage_entry.get())
+    v_in = float(high_voltage_entry.get())
+    if v_in > 106:
+        print('Set to 106V, cannot go higher for the moment')
+    gas_puff_valve.high_voltage = v_in/21.2
 
 def update_low_voltage():
-    gas_puff_valve.low_voltage = float(low_voltage_entry.get())
+    v_in = float(low_voltage_entry.get())
+    if v_in < 0:
+        v_in = 0
+        print('Set to 0V, cannot go negative')
+    gas_puff_valve.low_voltage = v_in/21.2
     
 def update_puff_time():
     gas_puff_valve.puff_time = float(puff_time_entry.get())

@@ -155,7 +155,7 @@ class wavegen_control:
 		s.close()
 
 		# Sleep 0.5s after each command
-		time.sleep(0.5)
+		time.sleep(0.1)
 		#print(' | response is', response,'end')
 
 		return response
@@ -232,22 +232,20 @@ class wavegen_control:
 	The value is an iterable with two items [HiLevel, LoLevel]
 	'''
 
-	@property
 	def voltage_level(self):
 		HiLevel = float(self.send_text('VOLT:HIGH?'))
 		LoLevel = float(self.send_text('VOLT:LOW?'))
 		
 		return(HiLevel, LoLevel)
 
-	@voltage_level.setter
-	def voltage_level(self, level):
-		try:
-			hi, lo = level
-		except ValueError:
-			raise ValueError('The voltage level setter needs an iterable with two items: [HiLevel, LoLevel]')
-		else:
-			self.send_text('VOLT:HIGH '+str(hi))
-			self.send_text('VOLT:LOW '+str(lo))
+	def set_high_level(self, level):
+		self.send_text('VOLT:HIGH '+str(level))
+			
+	def set_low_level(self, level):
+		self.send_text('VOLT:LOW '+str(level))
+			
+	def voltage_range(self, stat): #stat: ON, OFF, ONCE
+		self.send_text('VOLT:RANG:AUTO '+ stat)
 
 #-------------------------------------------------------
 

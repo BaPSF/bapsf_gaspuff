@@ -92,10 +92,11 @@ class GasPuffValve(object):
 		data = generate_pulse_waveform() # Define Arbitrary waveform shape
 		self.wavegen.send_dac_data(data) # Send waveform shape to the device
 		self.wavegen.burst(True, 1, 180) # Enable burst mode
+		self.wavegen.voltage_range('ON')
 	
 	@property
 	def high_voltage(self):
-		hi, lo = self.wavegen.voltage_level
+		hi, lo = self.wavegen.voltage_level()
 		self._high_voltage = hi
 		return self._high_voltage
 
@@ -107,14 +108,14 @@ class GasPuffValve(object):
 			print("High voltage is lower than low voltage.")
 
 		self.wavegen.output = 0
-		self.wavegen.voltage_level = (value, self._low_voltage)
+		self.wavegen.set_high_level(value)
 		self.wavegen.output = 1
 
 		self._high_voltage = value
 
 	@property
 	def low_voltage(self):
-		hi, lo = self.wavegen.voltage_level
+		hi, lo = self.wavegen.voltage_level()
 		self._low_voltage = lo
 		return self._low_voltage
 
@@ -126,7 +127,7 @@ class GasPuffValve(object):
 			print("Low voltage is higher than high voltage.")
 
 		self.wavegen.output = 0
-		self.wavegen.voltage_level = (self.high_voltage, value)
+		self.wavegen.set_low_level(value)
 		self.wavegen.output = 1
 
 		self._low_voltage = value
