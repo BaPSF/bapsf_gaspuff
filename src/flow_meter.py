@@ -74,6 +74,21 @@ class FlowMeter(object):
             reading.append(val)
         return reading
 
+    def get_pre_and_post_trigger_samples(self, pretrigger_samples=10, posttrigger_samples=90):
+        """
+        Retrieve pre-trigger and post-trigger samples from the flow meter buffer.
+        """
+        samples = []
+        buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
+        # Get the last samples of the buffer (is this the correct side of the array? Not sure)
+        samples.extend(buffer.values[-pretrigger_samples:])
+        # Loop over the next values to get the post-trigger samples
+        for i in range(posttrigger_samples):
+            samples.append(self.device.read_measured_value(Sfc5xxxScaling.USER_DEFINED))
+        
+        return samples
+
+
 """
 This class represents a high-level interface for controlling the flow reading system,
 including triggering and data acquisition.
