@@ -23,10 +23,11 @@ def read_flowmeter(q_trigger, q_data, flow_meter_port, slave_address, wait_time=
         elif trigger == 'TRIG':
             # Wait so that both pre- and post-trigger samples are recorded
             time.sleep(wait_time)
+            # t0 and t1 for timing, if wanted
+            # t0 = time.time()
             # Only use buffer readouts for maximum speed. 3 takes usually ~70 ms.
-            t0 = time.time()
             buff = fm.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED, max_reads=3)
-            t1 = time.time() - t0
+            # t1 = time.time() - t0
             # print(' - device: {}, '.format(slave_address) +
             #       'read_count: {}, '.format(buff.read_count) +
             #       'lost_values: {}, '.format(buff.lost_values) +
@@ -43,7 +44,7 @@ def read_flowmeter(q_trigger, q_data, flow_meter_port, slave_address, wait_time=
 
 
 # Send data to the read-msi-tcp.py script on another PC on the network. That script stores all MSI
-#   for each shot in an HDF5 file. This code is acting as a server
+#   for each shot in an HDF5 file. This code is a server and read-msi-tcp.py is a client.
 def send_data(q, q_quit, HOST, PORT):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -136,7 +137,7 @@ if __name__ == '__main__':
     q_data = mp.Queue()
     # Queue to send quit signals to the server process
     q_quit_server = mp.Queue()
-    # Data to send. Max_size = 1 so we do not fill up memory when not connected.
+    # Data to send to read-msi-tcp. Max_size = 1 so we do not fill up memory when not connected.
     q_data_server = mp.Queue(maxsize=1)
 
     print("Starting flow meter threads")
@@ -215,13 +216,15 @@ if __name__ == '__main__':
 
                     # samp_list.append(temp_samples)
 
+                    # Check to see if the server queue (max capacity of 1) is full so that multiple
+                    #   shots are not sent (only one shot is sent).
                     if q_data_server.full():
                         q_data_server.get()  # Clear out the unsent data
                     q_data_server.put(temp_samples)
 
                     time.sleep(0.1)
 
-                # If one of the flow meters is unresponsive, then throw an exception.
+                # If both of the flow meters are unresponsive (no data), then throw an exception.
                 except queue.Empty:
                     print('Exception: no data from flow meter(s)')
 
