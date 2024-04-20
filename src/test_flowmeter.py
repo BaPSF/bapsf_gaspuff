@@ -6,13 +6,10 @@ from sensirion_shdlc_sfc5xxx import Sfc5xxxShdlcDevice, Sfc5xxxScaling, \
 
 print('Flow meter #2 (East/near)')
 
-# Define the port using by-id so that we don't rely on (uncertain) /dev/usbTTY{0,1} mapping which may not
-#   be deterministic or reboots. I'm not too sure.
-#   Additional reading: https://forums.raspberrypi.com/viewtopic.php?t=283216
-portEast = '/dev/serial/by-id/usb-FTDI_USB-RS485_Cable_AU05D9B7-if00-port0'
-# portEast = '/dev/ttyUSB0'
 portWest = '/dev/serial/by-id/usb-FTDI_USB-RS485_Cable_AU050ZDN-if00-port0'
-# portWest = '/dev/ttyUSB1'
+# portEast = '/dev/ttyUSB0'
+portEast = '/dev/serial/by-id/usb-FTDI_USB-RS485_Cable_AU05D9B7-if00-port0'
+# portEast = '/dev/ttyUSB1'
 
 with ShdlcSerialPort(port=portEast, baudrate=460800) as port:
     device = Sfc5xxxShdlcDevice(ShdlcConnection(port), slave_address=2)
