@@ -167,7 +167,21 @@ if __name__ == '__main__':
         # for i in range(n_loop):
         while True:
             # Timeout after 500 ms so that we are not stuck waiting for a trigger forever.
-            trigger = GPIO.wait_for_edge(trigger_pin, GPIO.RISING, timeout=500)
+            try:
+                trigger = GPIO.wait_for_edge(trigger_pin, GPIO.RISING, timeout=500)
+            except Exception as e:
+                print(e)
+                trigger = None
+                print("Attempting GPIO setup again...")
+                try:
+                    GPIO.cleanup()
+                    GPIO.setmode(GPIO.BCM)
+                    GPIO.setup(trigger_pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+                except Exception as e2:
+                    print(e2)
+                print("GPIO setup - complete")
+                time.sleep(1)
+
             if trigger is None:
                 pass
                 # print('trigger timeout')  # check for quit signal
