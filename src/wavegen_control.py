@@ -103,6 +103,7 @@ class wavegen_control:
 				session = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 				# session.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 0)
 				# session.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, 0)
+				session.bind(('192.168.7.38', 0))  # set local interface for comms
 				session.connect((self.server_ip_addr,port))
 				break
 			except ConnectionRefusedError:
@@ -382,7 +383,7 @@ class wavegen_control:
 #----------------------FOR TEST---------------------------------#
 if __name__ == '__main__':
 	#reply = 'none'
-	wavegen = wavegen_control(server_ip_addr = '192.168.0.106')
+	wavegen = wavegen_control(server_ip_addr = '192.168.7.61')
 	
 	wavegen.DCoffset = 0
 
