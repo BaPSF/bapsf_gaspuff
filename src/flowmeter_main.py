@@ -1,4 +1,4 @@
-from flow_meter import FlowMeter
+from FlowMeterCommunication import FlowMeter
 import datetime
 import numpy as np
 import time
