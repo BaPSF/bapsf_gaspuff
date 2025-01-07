@@ -21,37 +21,44 @@ class FlowMeter(object):
         slave_address : Address of the device in the master-slave model of the device control model.
             Typically no need to change.
         """
-        self.port = ShdlcSerialPort(port=port, baudrate=baudrate) # setup serial port
-        self.device = Sfc5xxxShdlcDevice(ShdlcConnection(self.port), slave_address=slave_address)
-        
-        # Print device information upon initialization
-        self._print_device_info()
-        
-        self.device.activate_calibration(3) # specify calibration file index in list; default now on Helium (3)
-        # set units
-        self.unit = Sfc5xxxMediumUnit(
-            Sfc5xxxUnitPrefix.ONE,
-            Sfc5xxxUnit.STANDARD_LITER,
-            Sfc5xxxUnitTimeBase.MINUTE
-        )
-        self.device.set_user_defined_medium_unit(self.unit)
+        try:
+            self.port = ShdlcSerialPort(port=port, baudrate=baudrate)
+            self.device = Sfc5xxxShdlcDevice(ShdlcConnection(self.port), slave_address=slave_address)
+            
+            # Print device information upon initialization
+            self._print_device_info()
+            
+            self.device.activate_calibration(3)
+            self.unit = Sfc5xxxMediumUnit(
+                Sfc5xxxUnitPrefix.ONE,
+                Sfc5xxxUnit.STANDARD_LITER,
+                Sfc5xxxUnitTimeBase.MINUTE
+            )
+            self.device.set_user_defined_medium_unit(self.unit)
+        except Exception as e:
+            if hasattr(self, 'port'):
+                self.port.close()
+            raise RuntimeError(f"Failed to initialize flow meter: {str(e)}")
 
     def _print_device_info(self):
         """Print device information and available calibration blocks."""
-        print(f"\nFlow meter at {self.port.port} (slave address: {self.device.slave_address})")
-        print("Version:", self.device.get_version())
-        print("Product Name:", self.device.get_product_name())
-        print("Article Code:", self.device.get_article_code())
-        print("Serial Number:", self.device.get_serial_number())
-        
-        print("\nAvailable gas calibration blocks:")
-        for i in range(self.device.get_number_of_calibrations()):
-            if self.device.get_calibration_validity(i):
-                gas = self.device.get_calibration_gas_description(i)
-                fullscale = self.device.get_calibration_fullscale(i)
-                unit = self.device.get_calibration_gas_unit(i)
-                print(f" - {i}: {fullscale:.2f} {unit} {gas}")
-        print()
+        try:
+            print(f"\nFlow meter at {self.port.port} (slave address: {self.device.slave_address})")
+            print("Version:", self.device.get_version())
+            print("Product Name:", self.device.get_product_name())
+            print("Article Code:", self.device.get_article_code())
+            print("Serial Number:", self.device.get_serial_number())
+            
+            print("\nAvailable gas calibration blocks:")
+            for i in range(self.device.get_number_of_calibrations()):
+                if self.device.get_calibration_validity(i):
+                    gas = self.device.get_calibration_gas_description(i)
+                    fullscale = self.device.get_calibration_fullscale(i)
+                    unit = self.device.get_calibration_gas_unit(i)
+                    print(f" - {i}: {fullscale:.2f} {unit} {gas}")
+            print()
+        except Exception as e:
+            print(f"Warning: Could not get device info: {str(e)}")
 
     def set_baudrate(self, baudrate):
         """
@@ -107,3 +114,15 @@ class FlowMeter(object):
             samples.append(self.device.read_measured_value(Sfc5xxxScaling.USER_DEFINED))
         
         return samples
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if hasattr(self, 'port'):
+            self.port.close()
+
+    def close(self):
+        """Explicitly close the port connection"""
+        if hasattr(self, 'port'):
+            self.port.close()
