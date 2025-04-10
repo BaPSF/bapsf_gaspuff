@@ -122,12 +122,13 @@ def main():
 	hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
 
 	init_hdf5_file(hdf5_ifn, pfController)
+	f = h5py.File(hdf5_ifn, 'a', libver='latest', swmr=True) # update: moved open file out of the loop, added swmr, TODO: add an outside loop for crash recovery (re-opens file)
 
 	count = 0 # count the number of pressure readings saved
 	
 	while True: # Continuously save pressure reading to the HDF5 file
 		try:
-			time.sleep(0.001)
+			time.sleep(0.001) # TODO: consider longer interval if crashes continue
 			
 			timestamp, stat_ls, pres_ls, gauge_ls, gas_ls = get_pressure_reading(pfController)
 
@@ -135,7 +136,6 @@ def main():
 				print(f"Pressure reading: {pres_ls[0]} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))}")
 
 			# Save the data to the HDF5 file
-			f = h5py.File(hdf5_ifn, 'a', libver='latest')
 			fc_day = f.attrs['created'][-2] # Check if the day has changed
 			cd = get_current_day(timestamp)
 			if fc_day != cd: # if so, create a new HDF5 file
@@ -153,8 +153,9 @@ def main():
 
 			release_lock(lock_fd)
 
-			f.close()
-
+			if count % 50 == 0: # update: flush every 50 iterations 
+					f.flush() 
+				
 			count += 1
 
 		except KeyboardInterrupt:
@@ -166,6 +167,8 @@ def main():
 			print("Unable to open hdf5 file. Retry...")
 			time.sleep(0.5)
 			continue
+
+		# TODO: add a generic error to recover from crash
 
 #===============================================================================================================================================
 #<o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o>
