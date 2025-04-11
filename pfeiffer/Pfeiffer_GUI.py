@@ -157,6 +157,14 @@ class MainWindow(QMainWindow):
         self.thread.start()  # Start the thread, which starts worker.run
 
     def update_plot(self, tarr, parr, gauge_id): # Update the plot with new data
+
+        if len(tarr) == 0 or len(parr) == 0: # Update: prevent crashes because of conflicts mid-write
+            return  
+
+        if len(tarr) != len(parr):
+            min_len = min(len(tarr), len(parr))
+            tarr = tarr[:min_len]
+            parr = parr[:min_len]
         
         # Convert the timestamp to datetime objects
         timestamps = [datetime.datetime.fromtimestamp(ts) for ts in tarr]
