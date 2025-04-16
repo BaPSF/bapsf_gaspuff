@@ -13,7 +13,13 @@ import h5py
 import numpy as np
 import portalocker
 
-from PfeifferVacuumCommunication import MaxiGauge
+USE_MOCK = False # true for local debugging 
+
+if USE_MOCK:
+    from MockGauge import MockGauge as MaxiGauge
+else:
+    from PfeifferVacuumCommunication import MaxiGauge
+# from PfeifferVacuumCommunication import MaxiGauge
 
 #===============================================================================================================================================
 #===CHANGE THE FOLLOWING PARAMETERS IF NECCESSARY=================================================================================================
@@ -43,41 +49,60 @@ def release_lock(fd):
 
 def init_hdf5_file(file_name, controller):
 
-	if os.path.exists(file_name):
-		print("HDF5 file exist")
-		return None
-		  
-	# Get gauges connected to the controller
-	controller.connect()
-	gauge_ls = controller.get_device_id()
-	gas_ls = controller.get_gas_type()
-	timestamp = time.time()
-	controller.disconnect()
+	if not os.path.exists(file_name):
+		print("Creating new HDF5 file...")
 	
-	with h5py.File(file_name, "w",  libver='latest') as f:
-		ct = time.localtime(timestamp)
-		f.attrs['created'] = ct
-		print("HDF5 file created ", time.strftime("%Y-%m-%d %H:%M:%S", ct))
-		f.attrs['description'] = "Pressure data. See group description and attribute for more info."
+		# Get gauges connected to the controller
+		controller.connect()
+		gauge_ls = controller.get_device_id()
+		gas_ls = controller.get_gas_type()
+		timestamp = time.time()
+		controller.disconnect()
+	
+		with h5py.File(file_name, "w",  libver='latest') as f:
+			ct = time.localtime(timestamp)
+			f.attrs['created'] = ct
+			print("HDF5 file created ", time.strftime("%Y-%m-%d %H:%M:%S", ct))
+			f.attrs['description'] = "Pressure data. See group description and attribute for more info."
 
-		grp = f.require_group("PfeifferVacuum")
-		grp.attrs['description'] = "Pressure reading from Pfeiffer Vacuum gauge using MaxiGauge controller TPG 366. See dataset description for info about the specific gauge."
-		grp.attrs['unit'] = "Torr"
-		grp.attrs['Gas type'] = str(MaxiGauge.GAS_TYPE)
+			grp = f.require_group("PfeifferVacuum")
+			grp.attrs['description'] = "Pressure reading from Pfeiffer Vacuum gauge using MaxiGauge controller TPG 366. See dataset description for info about the specific gauge."
+			grp.attrs['unit'] = "Torr"
+			grp.attrs['Gas type'] = str(MaxiGauge.GAS_TYPE)
 
-		for i, gauge_id in enumerate(gauge_ls):
+			for i, gauge_id in enumerate(gauge_ls):
 
-			dataset_name = str(i+1) # sensor number starts from 1
-			p_dataset = grp.require_dataset(dataset_name, (0,), maxshape=(None,), dtype='f')
-			p_dataset.attrs['Model'] = [gauge_id]
-			p_dataset.attrs['Unit'] = "Torr"
-			p_dataset.attrs['Gas'] = [gas_ls[i]]
-			p_dataset.attrs['Modified time'] = [timestamp]
-			p_dataset.attrs['description'] = "Pressure reading from the sensor. Attribute 'Model', 'Gas', 'Modified time' are lists.  When a new gauge or gas setting is applied, dataset attribute will be modified accordingly by appending to the list."
+				dataset_name = str(i+1) # sensor number starts from 1
+				p_dataset = grp.require_dataset(dataset_name, (0,), maxshape=(None,), dtype='f')
+				p_dataset.attrs['Model'] = [gauge_id]
+				p_dataset.attrs['Unit'] = "Torr"
+				p_dataset.attrs['Gas'] = [gas_ls[i]]
+				p_dataset.attrs['Modified time'] = [timestamp]
+				p_dataset.attrs['description'] = "Pressure reading from the sensor. Attribute 'Model', 'Gas', 'Modified time' are lists.  When a new gauge or gas setting is applied, dataset attribute will be modified accordingly by appending to the list."
 
-		t_dataset = grp.create_dataset("timestamp", (0,), maxshape=(None,), dtype=np.float64)
-		t_dataset.attrs['description'] = "seconds since epoch: January 1, 1970, 00:00:00 (UTC)"
-		t_dataset.attrs['unit'] = "s"
+			t_dataset = grp.create_dataset("timestamp", (0,), maxshape=(None,), dtype=np.float64)
+			t_dataset.attrs['description'] = "seconds since epoch: January 1, 1970, 00:00:00 (UTC)"
+			t_dataset.attrs['unit'] = "s"
+
+	else:
+		print("HDF5 file exists. Verifying structure...")
+		with h5py.File(file_name, 'a') as f:
+			grp = f.require_group("PfeifferVacuum")
+			gauge_ls = controller.get_device_id()
+			gas_ls = controller.get_gas_type()
+
+			for i, gauge_id in enumerate(gauge_ls):
+				dataset_name = str(i+1)
+				if dataset_name not in grp:
+					p_dataset = grp.create_dataset(dataset_name, (0,), maxshape=(None,), dtype='f')
+					p_dataset.attrs['Model'] = [gauge_id]
+					p_dataset.attrs['Unit'] = "Torr"
+					p_dataset.attrs['Gas'] = [gas_ls[i]]
+					p_dataset.attrs['Modified time'] = [time.time()]
+					p_dataset.attrs['description'] = "Pressure reading from the sensor."
+
+			if "timestamp" not in grp:
+				grp.create_dataset("timestamp", (0,), maxshape=(None,), dtype='f')
 
 def get_pressure_reading(controller):
 
@@ -117,16 +142,15 @@ def main():
 
 	pfController = MaxiGauge(ip_addr=ip_address)
 	count = 0 # count the number of pressure readings saved
+	# Create a new HDF5 file; if it already exists, do nothing
+	date = datetime.date.today()
+	hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
+	init_hdf5_file(hdf5_ifn, pfController)
 
 	while True: 
 		try: 
-			# Create a new HDF5 file; if it already exists, do nothing
-			date = datetime.date.today()
-			hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
-
-			init_hdf5_file(hdf5_ifn, pfController)
-			with h5py.File(hdf5_ifn, 'a', libver='latest', swmr=True) as f: # update: moved open file out of the loop, added swmr
-
+			with h5py.File(hdf5_ifn, 'a', libver='latest') as f: 
+				f.swmr_mode = True
 				while True: # Continuously save pressure reading to the HDF5 file
 					try:
 						time.sleep(0.001) 
@@ -140,17 +164,19 @@ def main():
 						fc_day = f.attrs['created'][-2] # Check if the day has changed
 						cd = get_current_day(timestamp)
 						if fc_day != cd: # if so, create a new HDF5 file
+							hdf5_ifn = f"{hdf5_path}\\pressure_data_{cd}.hdf5"
+							init_hdf5_file(hdf5_ifn, pfController)
 							break
 
 						# Lock the file before writing
-						lockfile = f"{hdf5_ifn}_{"PfeifferVacuum"}.lock" 
+						lockfile = f"{hdf5_ifn}_PfeifferVacuum.lock" 
 						lock_fd = acquire_lock(lockfile)
 						save_pressure_reading(f, timestamp, pres_ls, gauge_ls, gas_ls)
 						release_lock(lock_fd)
 
 						count += 1
 
-						if count % 50 == 0: # update: flush every 50 iterations 
+						if count % 50 == 0: 
 								f.flush() 
 								break
 
