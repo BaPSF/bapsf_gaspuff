@@ -88,8 +88,11 @@ def init_hdf5_file(file_name, controller):
 		print("HDF5 file exists. Verifying structure...")
 		with h5py.File(file_name, 'a') as f:
 			grp = f.require_group("PfeifferVacuum")
+			controller.connect()
 			gauge_ls = controller.get_device_id()
 			gas_ls = controller.get_gas_type()
+			timestamp = time.time()
+			controller.disconnect()
 
 			for i, gauge_id in enumerate(gauge_ls):
 				dataset_name = str(i+1)
@@ -176,7 +179,7 @@ def main():
 
 						count += 1
 
-						if count % 50 == 0: 
+						if count % 5 == 0: 
 								f.flush() 
 								break
 
@@ -184,6 +187,8 @@ def main():
 						print("Unable to open hdf5 file. Retry...")
 						time.sleep(0.5)
 						continue
+					except KeyboardInterrupt:
+						raise KeyboardInterrupt
 
 					except Exception as e:
 						print(f"Operation error: {e}. Reopening file...")

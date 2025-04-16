@@ -22,14 +22,16 @@ import h5py
 import os
 import time
 import datetime
-import portalocker
+# import portalocker
 
 #===============================================================================================================================================
 sensor_number = 1
-n_points = 10000
+n_points = 200
+
+dir_path = r"C:\data\gauge"
 #===============================================================================================================================================
 
-def get_latest_file(dir_path=r"C:\data\gauge"):
+def get_latest_file(dir_path=dir_path):
     """
     This function returns the latest file in a directory.
 
@@ -39,7 +41,7 @@ def get_latest_file(dir_path=r"C:\data\gauge"):
     Returns:
         str: The path to the latest file.
     """
-    file_list = os.listdir(dir_path)
+    file_list = [f for f in os.listdir(dir_path) if f.endswith(".hdf5")]
     full_path_file_list = [os.path.join(dir_path, file) for file in file_list]
     return max(full_path_file_list, key=os.path.getctime)
 
@@ -62,7 +64,8 @@ def get_data(ifn):
     read the data from the hdf5 file
     '''
     lockfile = ifn + '_PfeifferVacuum.lock'
-    lock_fd = acquire_lock(lockfile)
+    # lock_fd = acquire_lock(lockfile)
+
 
     with h5py.File(ifn, 'r', swmr=True) as f:
 
@@ -70,12 +73,17 @@ def get_data(ifn):
         tarr = f['PfeifferVacuum']['timestamp'][::10]
         gauge_id = f['PfeifferVacuum'][str(sensor_number)].attrs['Model'][-1]
 
+        if isinstance(gauge_id, (list, np.ndarray)):
+            gauge_id = gauge_id[0]
+        if isinstance(gauge_id, bytes):
+            gauge_id = gauge_id.decode()
+
         if len(parr) < n_points:
             return tarr, parr, gauge_id
         else:
             return tarr[-n_points:], parr[-n_points:], gauge_id
         
-    release_lock(lock_fd)
+
 #===============================================================================================================================================
 
 class Worker(QObject):
@@ -95,14 +103,19 @@ class Worker(QObject):
         while True:
             try:
                 ifn = get_latest_file()
+                print("Latest HDF5 file selected:", ifn)
                 tarr, parr, gauge_id = get_data(ifn)
 
                 self.data_updated.emit(tarr, parr, gauge_id)
                 
                 QThread.sleep(1)  # Sleep for 1 second
-            except OSError:
-                print("Unable to open hdf5 file. Retry...")
+            except OSError as e:
+                if "unable to lock file" in str(e):
+                    print("File temporarily locked by writer. Retry in 1s...")
+                else:
+                    print(f"HDF5 read error: {e}")
                 QThread.sleep(1)
+
 
 
 
@@ -158,8 +171,16 @@ class MainWindow(QMainWindow):
 
     def update_plot(self, tarr, parr, gauge_id): # Update the plot with new data
         
+        if len(tarr) == 0 or len(parr) == 0: # Update: prevent crashes because of conflicts mid-write
+            return  
+
+        if len(tarr) != len(parr):
+            min_len = min(len(tarr), len(parr))
+            tarr = tarr[:min_len]
+            parr = parr[:min_len]
+
         # Convert the timestamp to datetime objects
-        timestamps = [datetime.datetime.fromtimestamp(ts) for ts in tarr]
+        timestamps = [datetime.datetime.fromtimestamp(float(ts)) for ts in tarr]
         # Convert the datetime objects to strings in the format hr:min:sec
         time_strings = [ts.strftime('%H:%M:%S') for ts in timestamps]
         # Set the x-axis tick labels
@@ -168,7 +189,7 @@ class MainWindow(QMainWindow):
         self.ax.set_xticklabels([time_strings[i] for i in x_ticks])
         
         # Set the x-axis as the range of time_strings
-        self.line_A.set_data(range(len(time_strings)), parr)
+        self.line_A.set_data(range(len(time_strings)), np.asarray(parr, dtype=float))
         
         if gauge_id == 'PKR':
             self.line_A.set_label("Pirani/Cold Cathode")
