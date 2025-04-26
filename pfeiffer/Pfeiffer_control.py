@@ -12,8 +12,9 @@ import os
 import h5py
 import numpy as np
 import portalocker
+import subprocess
 
-USE_MOCK = False # true for local debugging 
+USE_MOCK = True # true for local debugging 
 
 if USE_MOCK:
     from MockGauge import MockGauge as MaxiGauge
@@ -148,66 +149,108 @@ def main():
 	# Create a new HDF5 file; if it already exists, do nothing
 	date = datetime.date.today()
 	hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
-	init_hdf5_file(hdf5_ifn, pfController)
 
-	while True: 
-		try: 
-			with h5py.File(hdf5_ifn, 'a', libver='latest') as f: 
-				f.swmr_mode = True
-				while True: # Continuously save pressure reading to the HDF5 file
-					try:
-						time.sleep(0.001) 
+	try:
+		init_hdf5_file(hdf5_ifn, pfController)
+	except OSError as e:
+		if "SWMR" in str(e) or "already open for write" in str(e):
+			print("SWMR lock detected during init. Attempting h5clear recovery...")
+			try:
+				subprocess.run(["h5clear", "-s", hdf5_ifn], check=True)
+				print("h5clear succeeded. Retrying init_hdf5_file...")
+				init_hdf5_file(hdf5_ifn, pfController)
+			except subprocess.CalledProcessError as h5clear_err:
+				print("h5clear failed during init:", h5clear_err)
+				return  # Abort run if recovery fails
+		else:
+			raise  # re-raise other unknown errors
+
+	while True: # Continuously save pressure reading to the HDF5 file
+		try:
+			time.sleep(0.001) 
 						
-						timestamp, stat_ls, pres_ls, gauge_ls, gas_ls = get_pressure_reading(pfController)
+			timestamp, stat_ls, pres_ls, gauge_ls, gas_ls = get_pressure_reading(pfController)
+			count += 1
 
-						if count % 100 == 0:
-							print(f"Pressure reading: {pres_ls[0]} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))}")
+			if count % 100 == 0:
+				print(f"Pressure reading: {pres_ls[0]} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))}")
 
-						# Save the data to the HDF5 file
+			# Lock the file before writing
+			lockfile = f"{hdf5_ifn}_PfeifferVacuum.lock" 
+			lock_fd = acquire_lock(lockfile)
+
+			try: # Save the data to the HDF5 file
+				with h5py.File(hdf5_ifn, 'a', libver='latest') as f: 
+					try: 
+						f.swmr_mode = True
 						fc_day = f.attrs['created'][-2] # Check if the day has changed
 						cd = get_current_day(timestamp)
+
 						if fc_day != cd: # if so, create a new HDF5 file
 							hdf5_ifn = f"{hdf5_path}\\pressure_data_{cd}.hdf5"
 							init_hdf5_file(hdf5_ifn, pfController)
 							break
 
-						# Lock the file before writing
-						lockfile = f"{hdf5_ifn}_PfeifferVacuum.lock" 
-						lock_fd = acquire_lock(lockfile)
 						save_pressure_reading(f, timestamp, pres_ls, gauge_ls, gas_ls)
-						release_lock(lock_fd)
 
-						count += 1
+						if count % 50 == 0: 
+							try:
+								f.flush()
+							except OSError as e: 
+								print("Flush failed,", e) 
+					except OSError as e:
+						print("Write error, did not save data", e)
+						raise 
 
-						if count % 5 == 0: 
-								f.flush() 
-								break
-
-					except OSError:
-						print("Unable to open hdf5 file. Retry...")
-						time.sleep(0.5)
-						continue
-					except KeyboardInterrupt:
-						raise KeyboardInterrupt
-
-					except Exception as e:
-						print(f"Operation error: {e}. Reopening file...")
-						time.sleep(0.5)
-						break
+			finally:			
+				release_lock(lock_fd)
 
 		except KeyboardInterrupt:
 			print("Keyboard interrupt detected. Exiting...")
 			break
-		
+
+		except OSError as e:
+			if "SWMR" in str(e) or "already open for write" in str(e):
+				print("Detected SWMR lock. Attempting auto-recovery using h5clear...")
+				try:
+					subprocess.run(["h5clear", "-s", hdf5_ifn], check=True)
+					print("h5clear completed successfully. Retrying...")
+					time.sleep(0.5)
+					continue  # Retry the loop
+				except subprocess.CalledProcessError as h5clear_err:
+					print("h5clear failed:", h5clear_err)
+					break  # Exit
+			else:
+				print("Unable to open HDF5 file. Retrying...")
+				time.sleep(0.5)
+				continue
+
+		except Exception as e:
+			print(f"Operation error: {e}. Reopening file...")
+			time.sleep(0.5)
+			break
+
 		except Exception as catastrophic_error:
 			print(f"CRITICAL FAILURE: {catastrophic_error}")
-			time.sleep(5)
+			time.sleep(1)
+			continue
+
+		except PermissionError:
+			print("Permission denied when trying to write. Retrying...")
+			time.sleep(1)
+			continue
+
+		
 
 #===============================================================================================================================================
 #<o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o>
 #===============================================================================================================================================
 
 if __name__ == "__main__":
-	main()
+	try:
+		main()
+	except KeyboardInterrupt:
+			print("Keyboard interrupt detected. Exiting...")
+
 	  
 
