@@ -17,21 +17,21 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 
+import os
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
 import numpy as np
 import h5py
 import os
 import time
 import datetime
-# import portalocker
 
 #===============================================================================================================================================
 sensor_number = 1
-n_points = 200
-
-dir_path = r"C:\data\gauge"
+n_points = 10000
 #===============================================================================================================================================
 
-def get_latest_file(dir_path=dir_path):
+def get_latest_file(dir_path=r"C:\data\gauge"):
     """
     This function returns the latest file in a directory.
 
@@ -45,45 +45,29 @@ def get_latest_file(dir_path=dir_path):
     full_path_file_list = [os.path.join(dir_path, file) for file in file_list]
     return max(full_path_file_list, key=os.path.getctime)
 
-def acquire_lock(lockfile):
-    while True:
-        try:
-            fd = open(lockfile, 'r')
-            portalocker.lock(fd, portalocker.LOCK_SH)
-            return fd
-        except portalocker.LockException:
-            print("Group is currently locked by writer. Retrying...")
-            time.sleep(0.2)
-
-def release_lock(fd):
-    portalocker.unlock(fd)
-    fd.close()
-
 def get_data(ifn):
     '''
     read the data from the hdf5 file
     '''
-    lockfile = ifn + '_PfeifferVacuum.lock'
-    # lock_fd = acquire_lock(lockfile)
+    try:
+        with h5py.File(ifn, 'r', swmr=True) as f:
 
+            parr =  f['PfeifferVacuum'][str(sensor_number)][::10]
+            tarr = f['PfeifferVacuum']['timestamp'][::10]
+            gauge_id = f['PfeifferVacuum'][str(sensor_number)].attrs['Model'][-1]
 
-    with h5py.File(ifn, 'r', swmr=True) as f:
+            if isinstance(gauge_id, (list, np.ndarray)):
+                gauge_id = gauge_id[0]
+            if isinstance(gauge_id, bytes):
+                gauge_id = gauge_id.decode()
 
-        parr =  f['PfeifferVacuum'][str(sensor_number)][::10]
-        tarr = f['PfeifferVacuum']['timestamp'][::10]
-        gauge_id = f['PfeifferVacuum'][str(sensor_number)].attrs['Model'][-1]
-
-        if isinstance(gauge_id, (list, np.ndarray)):
-            gauge_id = gauge_id[0]
-        if isinstance(gauge_id, bytes):
-            gauge_id = gauge_id.decode()
-
-        if len(parr) < n_points:
-            return tarr, parr, gauge_id
-        else:
-            return tarr[-n_points:], parr[-n_points:], gauge_id
-        
-
+            if len(parr) < n_points:
+                return tarr, parr, gauge_id
+            else:
+                return tarr[-n_points:], parr[-n_points:], gauge_id
+    except Exception as e:
+        print("GUI read failed:", e)
+        return None, None, None
 #===============================================================================================================================================
 
 class Worker(QObject):
@@ -96,6 +80,7 @@ class Worker(QObject):
     def __init__(self):
         super().__init__()
 
+
     def run(self):
         '''
         Find the latest file and read the last indexed data from it
@@ -106,7 +91,10 @@ class Worker(QObject):
                 print("Latest HDF5 file selected:", ifn)
                 tarr, parr, gauge_id = get_data(ifn)
 
-                self.data_updated.emit(tarr, parr, gauge_id)
+                if isinstance(tarr, np.ndarray) and isinstance(parr, np.ndarray) and isinstance(gauge_id, str):
+                    self.data_updated.emit(tarr, parr, gauge_id)
+                else:
+                    print("Skipping emit due to invalid data types.") 
                 
                 QThread.sleep(1)  # Sleep for 1 second
             except OSError as e:
@@ -114,7 +102,7 @@ class Worker(QObject):
                     print("File temporarily locked by writer. Retry in 1s...")
                 else:
                     print(f"HDF5 read error: {e}")
-                QThread.sleep(1)
+                QThread.sleep(2)
 
 
 
