@@ -1,7 +1,7 @@
 from PfeifferVacuumCommunication import MaxiGauge
 import time
 import traceback
-import datetime
+from datetime import datetime
 
 
 def test_communication_loop(ip_addr="192.168.7.44"):
