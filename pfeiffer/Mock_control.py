@@ -1,6 +1,7 @@
 from PfeifferVacuumCommunication import MaxiGauge
 import time
 import traceback
+import datetime
 
 
 def test_communication_loop(ip_addr="192.168.7.44"):
@@ -19,7 +20,8 @@ def test_communication_loop(ip_addr="192.168.7.44"):
 
             if count % 100 == 0: 
                 try: 
-                    print(stat_ls, pres_ls, gauge_id, gas_ls)
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"[{timestamp}] Iteration {count}: Pressure: {pres_ls} | Status: {stat_ls} | ID: {gauge_id} | Gas: {gas_ls}")
                 except Exception as e: 
                     print("Error printing gauge data:", e)
 
@@ -29,7 +31,8 @@ def test_communication_loop(ip_addr="192.168.7.44"):
             time.sleep(0.01)
 
         except Exception as e:
-            error_message = f"[ERROR {time.strftime('%Y-%m-%d %H:%M:%S')}] {type(e).__name__}: {e}\n"
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            error_message = f"[{timestamp}] ERROR {type(e).__name__}: {e}\n"
             print(error_message.strip())
             with open("gauge_errors.txt", "a") as log_file:
                 log_file.write(error_message)
