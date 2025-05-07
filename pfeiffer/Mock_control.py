@@ -17,6 +17,12 @@ def test_communication_loop(ip_addr="192.168.7.44"):
 
             count += 1
 
+            if count % 100 == 0: 
+                try: 
+                    print(stat_ls, pres_ls, gauge_id, gas_ls)
+                except Exception as e: 
+                    print("Error printing gauge data:", e)
+
             if count % 10000 == 0:
                 print(f"{count} iterations completed")
 
