@@ -77,6 +77,7 @@ class MaxiGauge:
                     retry_count += 1
                     print('...connection attempt timed out, at',time.ctime(),
                             '  Retry', retry_count, '/', RETRIES, "on", str(self.ip_addr))
+                    time.sleep(0.5) #05/08/2025
                 except socket.timeout: #05/08/2025
                     retry_count += 1
                     print('...connection attempt timed out, at',time.ctime(),
