@@ -62,6 +62,7 @@ class MaxiGauge:
             while retry_count < RETRIES:
                 try:
                     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(2) # if timeout, socket.timeout except will catch it, 05/08/2025
                     s.connect((self.ip_addr, self.SERVER_PORT))
                     if self.verbose:
                         print('...connection established at',time.ctime())
@@ -76,6 +77,11 @@ class MaxiGauge:
                     retry_count += 1
                     print('...connection attempt timed out, at',time.ctime(),
                             '  Retry', retry_count, '/', RETRIES, "on", str(self.ip_addr))
+                except socket.timeout: #05/08/2025
+                    retry_count += 1
+                    print('...connection attempt timed out, at',time.ctime(),
+                            '  Retry', retry_count, '/', RETRIES, "on", str(self.ip_addr))
+                    time.sleep(0.5)
                 except KeyboardInterrupt:
                     sys.exit('_______Halt due to CRTL_C________')
 
@@ -183,29 +189,36 @@ class MaxiGauge:
             raise MaxiGaugeError("Problem interpreting the returned line:\n%s" % reading)
         return status, pressure
     
-    def get_all_pressure_reading(self):
+    def get_all_pressure_reading(self): #05/08/2025
 
         try:
             resp = np.array(self.send(b"PRX", 1)[0].split(','))
-        except:
-            raise MaxiGaugeError("Problem interpreting the returned line:\n%s" % resp)
+        except Exception as e:
+            raise MaxiGaugeError(f"Problem with pressure response: {e}") 
         
-        statarr = [int(stat) for stat in resp[::2]]
-        presarr = [float(pres) for pres in resp[1::2]]
-        
-        return statarr, presarr
+        try:
+            statarr = [int(stat) for stat in resp[::2]]
+            presarr = [float(pres) for pres in resp[1::2]]
+            return statarr, presarr
+        except Exception as e:
+            raise MaxiGaugeError(f"Malformed pressure data: {resp} — {e}")
         
     
-    def get_device_id(self):
-        resp = self.send(b"TID", 1)
-        device_id = resp[0].split(',')
-        return device_id
+    def get_device_id(self): #05/08/2025
+        try:
+            resp = self.send(b"TID", 1)
+            return resp[0].split(',')
+        except Exception as e:
+            raise MaxiGaugeError(f"Device ID retrieval failed: {e}")
 
-    def get_gas_type(self):
-        resp = self.send(b"GAS", 1)
-        gas_type = resp[0].split(',')
-        gas_type = [int(gas) for gas in gas_type]
-        return gas_type
+    def get_gas_type(self): #05/08/2025
+        try:
+            resp = self.send(b"GAS", 1)
+            gas_type = resp[0].split(',')
+            gas_type = [int(gas) for gas in gas_type]
+            return gas_type
+        except Exception as e:
+            raise MaxiGaugeError(f"Gas type retrieval failed: {e}")
 
 
 
