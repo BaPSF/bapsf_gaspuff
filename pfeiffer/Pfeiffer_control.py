@@ -209,9 +209,20 @@ def main():
 								f.flush()
 							except OSError as e: 
 								print("Flush failed,", e) 
+								continue
+							except Exception as e: 
+								print("Flush failed or permission denied:", e)
+								try:
+									f.close()  
+								except Exception as close_err:
+									print("Failed to close file after flush error:", close_err)
+									continue  
 					except OSError as e:
 						print("Write error, did not save data", e)
 						raise 
+					except Exception as e:
+						print("Unexpected error during file write:", e)
+						raise
 
 			finally:			
 				release_lock(lock_fd)
@@ -226,7 +237,7 @@ def main():
 				try:
 					subprocess.run(["C:/Program Files/HDF_Group/HDF5/1.14.6/bin/h5clear.exe", "-s", hdf5_ifn], check=True) #update 5/1
 					print("h5clear completed successfully. Retrying...")
-					time.sleep(0.5)
+					time.sleep(2)
 					continue  # Retry the loop
 				except subprocess.CalledProcessError as h5clear_err:
 					print("h5clear failed:", h5clear_err)
