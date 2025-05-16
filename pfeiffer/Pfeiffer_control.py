@@ -12,14 +12,9 @@ import os
 import h5py
 import numpy as np
 import portalocker
+import subprocess
 
-USE_MOCK = False # true for local debugging 
-
-if USE_MOCK:
-    from MockGauge import MockGauge as MaxiGauge
-else:
-    from PfeifferVacuumCommunication import MaxiGauge
-# from PfeifferVacuumCommunication import MaxiGauge
+from PfeifferVacuumCommunication import MaxiGauge, MaxiGaugeError #updated by Jingxuan, raise maxigauge errors
 
 #===============================================================================================================================================
 #===CHANGE THE FOLLOWING PARAMETERS IF NECCESSARY=================================================================================================
@@ -85,7 +80,7 @@ def init_hdf5_file(file_name, controller):
 			t_dataset.attrs['unit'] = "s"
 
 	else:
-		print("HDF5 file exists. Verifying structure...")
+		print("HDF5 file exists. Verifying structure...") #updated by Jingxuan, check for incorrect file structure
 		with h5py.File(file_name, 'a') as f:
 			grp = f.require_group("PfeifferVacuum")
 			controller.connect()
@@ -108,13 +103,18 @@ def init_hdf5_file(file_name, controller):
 				grp.create_dataset("timestamp", (0,), maxshape=(None,), dtype='f')
 
 def get_pressure_reading(controller):
-
-	controller.connect()
-	stat_ls, pres_ls = controller.get_all_pressure_reading()
-	timestamp = time.time()
-	gauge_ls = controller.get_device_id()
-	gas_ls = controller.get_gas_type()
-	controller.disconnect()
+	try:
+		controller.connect()
+		stat_ls, pres_ls = controller.get_all_pressure_reading()
+		timestamp = time.time()
+		gauge_ls = controller.get_device_id()
+		gas_ls = controller.get_gas_type()
+		controller.disconnect()
+	except MaxiGaugeError as e: #05/13/2025
+		print("MaxiGauge communication error, read failed:", e)
+		controller.disconnect()
+		time.sleep(0.5)
+		return None, None, None, None, None
 
 	return timestamp, stat_ls, pres_ls, gauge_ls, gas_ls
 
@@ -148,66 +148,110 @@ def main():
 	# Create a new HDF5 file; if it already exists, do nothing
 	date = datetime.date.today()
 	hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
-	init_hdf5_file(hdf5_ifn, pfController)
 
-	while True: 
-		try: 
-			with h5py.File(hdf5_ifn, 'a', libver='latest') as f: 
-				f.swmr_mode = True
-				while True: # Continuously save pressure reading to the HDF5 file
-					try:
-						time.sleep(0.001) 
-						
-						timestamp, stat_ls, pres_ls, gauge_ls, gas_ls = get_pressure_reading(pfController)
+	try:
+		init_hdf5_file(hdf5_ifn, pfController)
+	except OSError as e: #updated by Jingxuan, h5clear module for unexpected lock
+		if "SWMR" in str(e) or "already open for write" in str(e):
+			print("SWMR lock detected during init. Attempting h5clear recovery...")
+			try:
+				subprocess.run(["h5clear", "-s", hdf5_ifn], check=True)
+				print("h5clear succeeded. Retrying init_hdf5_file...")
+				init_hdf5_file(hdf5_ifn, pfController)
+			except subprocess.CalledProcessError as h5clear_err:
+				print("h5clear failed during init:", h5clear_err)
+				return  # Abort run if recovery fails
+		else:
+			raise  # re-raise other unknown errors
 
-						if count % 100 == 0:
-							print(f"Pressure reading: {pres_ls[0]} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))}")
+	while True: # Continuously save pressure reading to the HDF5 file
+		try:
+			time.sleep(0.001) 
+	
+			try: #updated by Jingxuan, raise communication errors 
+				timestamp, stat_ls, pres_ls, gauge_ls, gas_ls = get_pressure_reading(pfController)
+			except MaxiGaugeError as e:
+				print("MaxiGauge communication error:", e)
+				pfController.disconnect()
+				time.sleep(1)
+				pfController.connect()
+				continue
+			except Exception as e:
+				print("Unexpected error:", e)
+				raise 
 
-						# Save the data to the HDF5 file
-						fc_day = f.attrs['created'][-2] # Check if the day has changed
-						cd = get_current_day(timestamp)
-						if fc_day != cd: # if so, create a new HDF5 file
-							hdf5_ifn = f"{hdf5_path}\\pressure_data_{cd}.hdf5"
-							init_hdf5_file(hdf5_ifn, pfController)
-							break
+			count += 1
 
-						# Lock the file before writing
-						lockfile = f"{hdf5_ifn}_PfeifferVacuum.lock" 
-						lock_fd = acquire_lock(lockfile)
-						save_pressure_reading(f, timestamp, pres_ls, gauge_ls, gas_ls)
-						release_lock(lock_fd)
+			if count % 100 == 0:
+				print(f"Pressure reading: {pres_ls[0]} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))}")
 
-						count += 1
+			# Lock the file before writing
+			# lockfile = f"{hdf5_ifn}_PfeifferVacuum.lock" 
+			# lock_fd = acquire_lock(lockfile)
 
-						if count % 5 == 0: 
-								f.flush() 
-								break
+			# Save the data to the HDF5 file
+			f = h5py.File(hdf5_ifn, 'a', libver='latest')
+			try:
+				fc_day = f.attrs['created'][-2] # Check if the day has changed
+				cd = get_current_day(timestamp)
+				if fc_day != cd: # if so, create a new HDF5 file
+					f.close()
+					date = datetime.date.today()
+					hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
+					init_hdf5_file(hdf5_ifn, pfController)
+					f = h5py.File(hdf5_ifn, 'a', libver='latest')
+					continue
+				
+				try: #updatd by Jingxuan, catches pressure errors while reading
+					save_pressure_reading(f, timestamp, pres_ls, gauge_ls, gas_ls)
+					f.close()
+				except Exception as e:
+						print("Failed to write pressure reading:", e)
+			except OSError as e:
+					print("Write error, did not save data", e)
+					time.sleep(0.5)
+					continue
 
-					except OSError:
-						print("Unable to open hdf5 file. Retry...")
-						time.sleep(0.5)
-						continue
-					except KeyboardInterrupt:
-						raise KeyboardInterrupt
-
-					except Exception as e:
-						print(f"Operation error: {e}. Reopening file...")
-						time.sleep(0.5)
-						break
+			
+			
+			# release_lock(lock_fd)
 
 		except KeyboardInterrupt:
 			print("Keyboard interrupt detected. Exiting...")
 			break
+
+		except OSError as e: #updated by Jingxuan, h5clear module for unexpected lock
+			if "SWMR" in str(e) or "already open for write" in str(e):
+				print("Detected SWMR lock. Attempting auto-recovery using h5clear...")
+				try:
+					subprocess.run(["C:/Program Files/HDF_Group/HDF5/1.14.6/bin/h5clear.exe", "-s", hdf5_ifn], check=True) #update 5/1
+					print("h5clear completed successfully. Retrying...")
+					time.sleep(2)
+					continue  # Retry the loop
+				except subprocess.CalledProcessError as h5clear_err:
+					print("h5clear failed:", h5clear_err)
+					break  # Exit
+			else:
+				print("Unable to open HDF5 file. Retrying...")
+				time.sleep(0.01)
+				continue
+
+		except Exception as e: #updated by Jingxuan, catches random errors
+			print(f"Operation error: {e}. Reopening file...")
+			time.sleep(0.5)
+			break
+
 		
-		except Exception as catastrophic_error:
-			print(f"CRITICAL FAILURE: {catastrophic_error}")
-			time.sleep(5)
 
 #===============================================================================================================================================
 #<o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o>
 #===============================================================================================================================================
 
 if __name__ == "__main__":
-	main()
+	try:
+		main()
+	except KeyboardInterrupt:
+			print("Keyboard interrupt detected. Exiting...")
+
 	  
 
