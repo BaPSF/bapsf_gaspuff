@@ -57,7 +57,7 @@ class MaxiGauge:
             if self.verbose:
                 print("Looking for Pfeiffer gauge controller at", self.ip_addr, "\n", flush=True)
 
-            RETRIES = 30
+            RETRIES = 300
             retry_count = 0
             while retry_count < RETRIES:
                 try:
