@@ -142,16 +142,24 @@ def save_pressure_reading(f, timestamp, pres_ls, gauge_ls, gas_ls):
 	# print("Pressure reading saved at ", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp)))
 
 #===============================================================================================================================================
+def init_log_dir(log_dir="C:\\data\\gauge"):
+	"""
+	Initializes the log directory if it does not exist.
+	"""
+	if not os.path.exists(log_dir):
+		os.makedirs(log_dir)
+		print(f"Log directory created at {log_dir}")
+	else:
+		print(f"Log directory already exists at {log_dir}")
 
 def log_connection_event(event_time, status, log_dir="C:\\data\\gauge", error_message=None): #05/27/2025
     """
     status: "LOST" or "RECOVERED"
     """
-    date_str = event_time.date().strftime("%Y-%m-%d")
-    log_path = os.path.join(log_dir, f"connection_log_{date_str}.txt")
+    log_path = os.path.join(log_dir, "connection_log.txt")
 
     with open(log_path, "a") as f:
-        line = f"{status} connection at {event_time.strftime('%H:%M:%S')}"
+        line = f"{status} connection at {event_time.strftime('%Y-%m-%d %H:%M:%S')}"
         if error_message:
             line += f" | {error_message}"
         f.write(line + "\n")
@@ -181,6 +189,12 @@ def main():
 				return  # Abort run if recovery fails
 		else:
 			raise  # re-raise other unknown errors
+
+	try:
+		init_log_dir(log_dir=hdf5_path)  # Initialize log directory
+	except OSError as e:
+		print(f"Failed to initialize log directory: {e}")
+		return
 
 	while True: # Continuously save pressure reading to the HDF5 file
 		try:
