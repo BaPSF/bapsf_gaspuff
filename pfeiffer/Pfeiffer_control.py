@@ -16,6 +16,8 @@ import subprocess
 
 from PfeifferVacuumCommunication import MaxiGauge, MaxiGaugeError #updated by Jingxuan, raise maxigauge errors
 
+connection_lost = False #pressure gauge communication status
+
 #===============================================================================================================================================
 #===CHANGE THE FOLLOWING PARAMETERS IF NECCESSARY=================================================================================================
 ip_address = "192.168.7.44"
@@ -141,6 +143,17 @@ def save_pressure_reading(f, timestamp, pres_ls, gauge_ls, gas_ls):
 
 #===============================================================================================================================================
 
+def log_connection_event(event_time, status, log_dir="C:\\data\\gauge"):
+    """
+    status: "LOST" or "RECOVERED"
+    """
+    date_str = datetime.date.today().strftime("%Y-%m-%d")
+    log_path = os.path.join(log_dir, f"connection_log_{date_str}.txt")
+    with open(log_path, "a") as f:
+        f.write(f"{status} connection at {event_time.strftime('%H:%M:%S')}\n")
+
+#===============================================================================================================================================
+
 def main():
 
 	pfController = MaxiGauge(ip_addr=ip_address)
@@ -170,8 +183,16 @@ def main():
 	
 			try: #updated by Jingxuan, raise communication errors 
 				timestamp, stat_ls, pres_ls, gauge_ls, gas_ls = get_pressure_reading(pfController)
+
+				if connection_lost:
+					log_connection_event(datetime.datetime.now(), "RECOVERED")
+					connection_lost = False
+
 			except MaxiGaugeError as e:
 				print("MaxiGauge communication error:", e)
+				if not connection_lost:
+					log_connection_event(datetime.datetime.now(), "LOST")
+					connection_lost = True
 				pfController.disconnect()
 				time.sleep(1)
 				pfController.connect()
