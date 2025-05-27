@@ -16,8 +16,6 @@ import subprocess
 
 from PfeifferVacuumCommunication import MaxiGauge, MaxiGaugeError #updated by Jingxuan, raise maxigauge errors
 
-connection_lost = False #pressure gauge communication status
-
 #===============================================================================================================================================
 #===CHANGE THE FOLLOWING PARAMETERS IF NECCESSARY=================================================================================================
 ip_address = "192.168.7.44"
@@ -174,6 +172,8 @@ def main():
 	# Create a new HDF5 file; if it already exists, do nothing
 	date = datetime.date.today()
 	hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
+
+	connection_lost = False #pressure gauge communication status
 
 	try:
 		init_hdf5_file(hdf5_ifn, pfController)
