@@ -144,11 +144,13 @@ def init_log_dir(log_dir="C:\\data\\gauge"):
 	"""
 	Initializes the log directory if it does not exist.
 	"""
-	if not os.path.exists(log_dir):
-		os.makedirs(log_dir)
-		print(f"Log directory created at {log_dir}")
+	log_path = os.path.join(log_dir, "connection_log.txt")
+	if not os.path.isfile(log_path):
+		with open(log_path, "a") as f:
+			f.write("")  # create empty file
+		print(f"Log file created at {log_path}")
 	else:
-		print(f"Log directory already exists at {log_dir}")
+		print(f"Log file already exists at {log_path}")
 
 def log_connection_event(event_time, status, log_dir="C:\\data\\gauge", error_message=None): #05/27/2025
     """
