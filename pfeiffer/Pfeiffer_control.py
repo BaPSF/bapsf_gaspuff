@@ -193,7 +193,7 @@ def main():
 			raise  # re-raise other unknown errors
 
 	try:
-		init_log_dir(log_dir=hdf5_path)  # Initialize log directory
+		init_log_dir()  # Initialize log directory
 	except OSError as e:
 		print(f"Failed to initialize log directory: {e}")
 		return
