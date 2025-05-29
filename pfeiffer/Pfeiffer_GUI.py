@@ -51,7 +51,6 @@ def get_data(ifn):
     '''
     try:
         with h5py.File(ifn, 'r', swmr=True) as f:
-
             parr =  f['PfeifferVacuum'][str(sensor_number)][::10]
             tarr = f['PfeifferVacuum']['timestamp'][::10]
             gauge_id = f['PfeifferVacuum'][str(sensor_number)].attrs['Model'][-1]
@@ -96,13 +95,13 @@ class Worker(QObject):
                 else:
                     print("Skipping emit due to invalid data types.") 
                 
-                QThread.sleep(1)  # Sleep for 1 second
+                QThread.msleep(500)  # Sleep for 1 second
             except OSError as e:
                 if "unable to lock file" in str(e):
                     print("File temporarily locked by writer. Retry in 1s...")
                 else:
                     print(f"HDF5 read error: {e}")
-                QThread.sleep(2)
+                QThread.msleep(20)
 
 
 
@@ -111,6 +110,11 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__() # Call the parent class constructor
+
+        self.avg_ts = []               # Cached 5-min bin start times
+        self.avg_ps = []               # Cached pressure averages
+        self.last_bin_timestamp = None  # timestamp of last completed bin
+        self.cache_initialized = False
 
         #======================== GUI setup ========================
         central_widget = QWidget() # Create a central widget
@@ -129,18 +133,26 @@ class MainWindow(QMainWindow):
         # Create a figure and a canvas for the figure
         self.fig = Figure(figsize=(15,15))
         plt.rcParams['font.size'] = 12
-        self.ax = self.fig.add_subplot(111)
+        self.ax_short = self.fig.add_subplot(211)  
+        self.ax_day = self.fig.add_subplot(212)
         self.canvas = FigureCanvas(self.fig)  # Create a canvas for the figure
         # Add the navigation toolbar for interacting with plot
         self.toolbar = NavigationToolbar(self.canvas, self)
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas)  # Add the canvas to the layout
-        # Plot label and title
-        self.ax.set_xlabel('Time')
-        self.ax.set_ylabel('Pressure (Torr)')
-        self.ax.grid(True)
         # Create the plot lines
-        self.line_A, = self.ax.plot([], [])
+        self.line_short, = self.ax_short.plot([], [])
+        self.line_day, = self.ax_day.plot([], [])
+        # Plot label and title
+        self.ax_short.set_title("Pressure (30 Seconds)")
+        self.ax_short.set_xlabel("Time")
+        self.ax_short.set_ylabel("Pressure (Torr)")
+        self.ax_short.grid(True)
+
+        self.ax_day.set_title("Pressure (Full Day, 5-min Average)")
+        self.ax_day.set_xlabel("Time")
+        self.ax_day.set_ylabel("Pressure (Torr)")
+        self.ax_day.grid(True)
         #======================== END GUI setup ========================
 
         # Updating the plot by reading data from hdf5; use thread to avoid blocking the GUI
@@ -158,7 +170,6 @@ class MainWindow(QMainWindow):
         self.thread.start()  # Start the thread, which starts worker.run
 
     def update_plot(self, tarr, parr, gauge_id): # Update the plot with new data
-        
         if len(tarr) == 0 or len(parr) == 0: # Update: prevent crashes because of conflicts mid-write
             return  
 
@@ -169,33 +180,75 @@ class MainWindow(QMainWindow):
 
         # Convert the timestamp to datetime objects
         timestamps = [datetime.datetime.fromtimestamp(float(ts)) for ts in tarr]
-        # Convert the datetime objects to strings in the format hr:min:sec
-        time_strings = [ts.strftime('%H:%M:%S') for ts in timestamps]
-        # Set the x-axis tick labels
-        x_ticks = np.linspace(0, len(time_strings)-1, 5, dtype=int)
-        self.ax.set_xticks(x_ticks)
-        self.ax.set_xticklabels([time_strings[i] for i in x_ticks])
-        
-        # Set the x-axis as the range of time_strings
-        self.line_A.set_data(range(len(time_strings)), np.asarray(parr, dtype=float))
-        
-        if gauge_id == 'PKR':
-            self.line_A.set_label("Pirani/Cold Cathode")
-        else:
-            self.line_A.set_label("Unknown gauge")
-        self.ax.legend(loc='upper right', fontsize=18)
+        pressures = np.asarray(parr, dtype=float)
+        now = timestamps[-1]
 
-        self.ax.relim()
-        self.ax.autoscale_view(True, True, True)
-        # Set y-axis tick labels in scientific notation
-        self.ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0))  
-        
+        # ==================== Plot 1: 30 seconds ====================
+        time_30s = now - datetime.timedelta(seconds=30)
+        indices_short = [i for i, ts in enumerate(timestamps) if ts >= time_30s]
 
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
+        if indices_short:
+            ts_short = [timestamps[i] for i in indices_short]
+            ps_short = pressures[indices_short]
+            self.line_short.set_data(ts_short, ps_short)
+            self.ax_short.set_xlim(ts_short[0], ts_short[-1])
+            self.ax_short.set_ylim(np.min(ps_short), np.max(ps_short) * 1.1)
+            self.ax_short.relim()
+            self.ax_short.autoscale_view(True, True, True)
 
-        self.update_count += 1  # Increment the update counter
-        print(f"Plot updated: {self.update_count}")  # Print the update count
+        # ==================== Plot 2: Full day, 5-minute average ====================
+        start_of_day = datetime.datetime(now.year, now.month, now.day)
+        end_of_day = start_of_day + datetime.timedelta(days=1)
+        bin_minutes = 5
+        bin_width_sec = bin_minutes * 60
+
+        # Filter today's data
+        indices_day = [i for i, ts in enumerate(timestamps) if ts >= start_of_day]
+        if indices_day:
+            ts_day = [timestamps[i] for i in indices_day]
+            ps_day = pressures[indices_day]
+            ts_unix = np.array([ts.timestamp() for ts in ts_day])
+
+            # Determine which bins each point falls into
+            bin_edges = np.arange(start_of_day.timestamp(), end_of_day.timestamp(), bin_width_sec)
+            bin_indices = np.digitize(ts_unix, bin_edges)
+
+            if not self.cache_initialized:
+                # INITIALIZE FULL CACHE ON FIRST RUN
+                print("Initializing full-day bin cache...")
+                for b in range(1, len(bin_edges)):
+                    bin_vals = [ps_day[i] for i in range(len(bin_indices)) if bin_indices[i] == b]
+                    if bin_vals:
+                        avg_time = datetime.datetime.fromtimestamp(bin_edges[b - 1])
+                        avg_val = np.mean(bin_vals)
+                        self.avg_ts.append(avg_time)
+                        self.avg_ps.append(avg_val)
+                        self.last_bin_timestamp = bin_edges[b - 1]
+                self.cache_initialized = True
+
+            else:
+                # ONLY UPDATE NEWEST BIN
+                latest_ts = ts_unix[-1]
+                current_bin_start = (latest_ts // bin_width_sec) * bin_width_sec
+                if self.last_bin_timestamp is None or current_bin_start > self.last_bin_timestamp:
+                    bin_start_time = datetime.datetime.fromtimestamp(current_bin_start)
+                    bin_end_time = bin_start_time + datetime.timedelta(seconds=bin_width_sec)
+                    bin_vals = [ps_day[i] for i, ts in enumerate(ts_day) if bin_start_time <= ts < bin_end_time]
+
+                    if bin_vals:
+                        avg_val = np.mean(bin_vals)
+                        self.avg_ts.append(bin_start_time)
+                        self.avg_ps.append(avg_val)
+                        self.last_bin_timestamp = current_bin_start
+                        print(f"Appended new bin: {bin_start_time.strftime('%H:%M')} with {len(bin_vals)} points")
+
+            # Plot cached averages
+            self.line_day.set_data(self.avg_ts, self.avg_ps)
+            self.ax_day.set_xlim(start_of_day, end_of_day)
+            if self.avg_ps:
+                self.ax_day.set_ylim(np.min(self.avg_ps), np.max(self.avg_ps) * 1.1)
+            self.ax_day.relim()
+            self.ax_day.autoscale_view(True, True, True)
 
 #===============================================================================================================================================
 #<o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o>
