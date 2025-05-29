@@ -16,6 +16,7 @@ import subprocess
 
 from PfeifferVacuumCommunication import MaxiGauge, MaxiGaugeError #updated by Jingxuan, raise maxigauge errors
 
+
 #===============================================================================================================================================
 #===CHANGE THE FOLLOWING PARAMETERS IF NECCESSARY=================================================================================================
 ip_address = "192.168.7.44"
@@ -222,8 +223,10 @@ def main():
 				pfController.connect()
 				continue
 			except Exception as e:
-				print("Unexpected error:", e)
-				raise 
+				print("Caught generic error:", type(e), e)
+				log_connection_event(datetime.datetime.now(), "LOST", error_message=f"(generic) {type(e).__name__}: {e}")
+				connection_lost = True
+				continue
 
 			count += 1
 
