@@ -154,17 +154,14 @@ def init_log_dir(log_dir="C:\\data\\gauge"):
 		print(f"Log file already exists at {log_path}")
 
 def log_connection_event(event_time, status, log_dir="C:\\data\\gauge", error_message=None): #05/27/2025
-    """
-    status: "LOST" or "RECOVERED"
-    """
-    log_path = os.path.join(log_dir, "connection_log.txt")
-
-    with open(log_path, "a") as f:
-        line = f"{status} connection at {event_time.strftime('%Y-%m-%d %H:%M:%S')}"
-        if error_message:
-            line += f" | {error_message}"
-        f.write(line + "\n")
-
+	log_path = os.path.join(log_dir, "connection_log.txt")
+	with open(log_path, "a") as f:
+		line = f"{status} connection at {event_time.strftime('%Y-%m-%d %H:%M:%S')}"
+		if error_message:
+			line += f" | {error_message}"
+		f.write(line + "\n")
+		f.flush()
+		print(line)
 
 #===============================================================================================================================================
 
