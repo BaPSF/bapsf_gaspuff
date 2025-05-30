@@ -192,7 +192,13 @@ class MainWindow(QMainWindow):
             ps_short = pressures[indices_short]
             self.line_short.set_data(ts_short, ps_short)
             self.ax_short.set_xlim(ts_short[0], ts_short[-1])
-            self.ax_short.set_ylim(np.min(ps_short), np.max(ps_short) * 1.1)
+            min_val = np.min(ps_short)
+            max_val = np.max(ps_short)
+            if max_val == min_val:
+                padding = 0.1 * max_val
+            else:
+                padding = 0.1 * (max_val - min_val)
+            self.ax_short.set_ylim(min_val - padding, max_val + padding)
             self.ax_short.relim()
             self.ax_short.autoscale_view(True, True, True)
 
@@ -249,6 +255,9 @@ class MainWindow(QMainWindow):
                 self.ax_day.set_ylim(np.min(self.avg_ps), np.max(self.avg_ps) * 1.1)
             self.ax_day.relim()
             self.ax_day.autoscale_view(True, True, True)
+
+        self.canvas.draw()
+        self.canvas.flush_events()
 
 #===============================================================================================================================================
 #<o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o>
