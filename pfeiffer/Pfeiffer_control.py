@@ -208,7 +208,7 @@ def main():
 					log_connection_event(datetime.datetime.now(), "RECOVERED")
 					connection_lost = False
 
-			except MaxiGaugeError as e:
+			except (MaxiGaugeError, TimeoutError) as e:
 				print("MaxiGauge communication error:", e)
 				if not connection_lost: 
 					log_connection_event(datetime.datetime.now(), "LOST", error_message=str(e))
@@ -234,6 +234,7 @@ def main():
 
 			# Save the data to the HDF5 file
 			f = h5py.File(hdf5_ifn, 'a', libver='latest')
+			f.swmr_mode = True
 			try:
 				fc_day = f.attrs['created'][-2] # Check if the day has changed
 				cd = get_current_day(timestamp)
@@ -243,6 +244,7 @@ def main():
 					hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
 					init_hdf5_file(hdf5_ifn, pfController)
 					f = h5py.File(hdf5_ifn, 'a', libver='latest')
+					f.swmr_mode = True
 					continue
 				
 				try: #updatd by Jingxuan, catches pressure errors while reading
