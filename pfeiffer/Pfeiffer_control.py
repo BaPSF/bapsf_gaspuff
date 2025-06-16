@@ -170,6 +170,7 @@ def main():
 	date = datetime.date.today()
 	hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
 
+	log_connection_event(datetime.datetime.now(), "STARTED")
 	connection_lost = False 
 
 	try:
