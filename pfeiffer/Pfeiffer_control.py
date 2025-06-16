@@ -111,13 +111,11 @@ def get_pressure_reading(controller):
 		gauge_ls = controller.get_device_id()
 		gas_ls = controller.get_gas_type()
 		controller.disconnect()
-	except MaxiGaugeError as e: #05/13/2025
-		print("MaxiGauge communication error, read failed:", e)
+		return timestamp, stat_ls, pres_ls, gauge_ls, gas_ls
+	except MaxiGaugeError as e:
 		controller.disconnect()
 		time.sleep(0.5)
-		return None, None, None, None, None
-
-	return timestamp, stat_ls, pres_ls, gauge_ls, gas_ls
+		raise
 
 def save_pressure_reading(f, timestamp, pres_ls, gauge_ls, gas_ls):
 
@@ -168,16 +166,15 @@ def log_connection_event(event_time, status, log_dir="C:\\data\\gauge", error_me
 def main():
 
 	pfController = MaxiGauge(ip_addr=ip_address)
-	count = 0 # count the number of pressure readings saved
-	# Create a new HDF5 file; if it already exists, do nothing
+	count = 0 
 	date = datetime.date.today()
 	hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
 
-	connection_lost = False #pressure gauge communication status
+	connection_lost = False 
 
 	try:
 		init_hdf5_file(hdf5_ifn, pfController)
-	except OSError as e: #updated by Jingxuan, h5clear module for unexpected lock
+	except OSError as e: 
 		if "SWMR" in str(e) or "already open for write" in str(e):
 			print("SWMR lock detected during init. Attempting h5clear recovery...")
 			try:
@@ -186,12 +183,12 @@ def main():
 				init_hdf5_file(hdf5_ifn, pfController)
 			except subprocess.CalledProcessError as h5clear_err:
 				print("h5clear failed during init:", h5clear_err)
-				return  # Abort run if recovery fails
+				return  
 		else:
-			raise  # re-raise other unknown errors
+			raise  
 
 	try:
-		init_log_dir()  # Initialize log directory
+		init_log_dir()  
 	except OSError as e:
 		print(f"Failed to initialize log directory: {e}")
 		return
@@ -200,9 +197,9 @@ def main():
 		try:
 			time.sleep(0.001) 
 	
-			try: #updated by Jingxuan, raise communication errors 
+			try: 
 				returns = get_pressure_reading(pfController)
-				if returns == (None, None, None, None, None): #05/27/2025
+				if returns == (None, None, None, None, None): 
 					continue
 				timestamp, stat_ls, pres_ls, gauge_ls, gas_ls = returns 
 
@@ -212,7 +209,7 @@ def main():
 
 			except MaxiGaugeError as e:
 				print("MaxiGauge communication error:", e)
-				if not connection_lost: #05/27/2025
+				if not connection_lost: 
 					log_connection_event(datetime.datetime.now(), "LOST", error_message=str(e))
 					connection_lost = True
 				pfController.disconnect()
@@ -265,23 +262,23 @@ def main():
 			print("Keyboard interrupt detected. Exiting...")
 			break
 
-		except OSError as e: #updated by Jingxuan, h5clear module for unexpected lock
+		except OSError as e: 
 			if "SWMR" in str(e) or "already open for write" in str(e):
 				print("Detected SWMR lock. Attempting auto-recovery using h5clear...")
 				try:
 					subprocess.run(["C:/Program Files/HDF_Group/HDF5/1.14.6/bin/h5clear.exe", "-s", hdf5_ifn], check=True) #update 5/1
 					print("h5clear completed successfully. Retrying...")
 					time.sleep(2)
-					continue  # Retry the loop
+					continue  
 				except subprocess.CalledProcessError as h5clear_err:
 					print("h5clear failed:", h5clear_err)
-					break  # Exit
+					break 
 			else:
 				print("Unable to open HDF5 file. Retrying...")
 				time.sleep(0.01)
 				continue
 
-		except Exception as e: #updated by Jingxuan, catches random errors
+		except Exception as e:
 			print(f"Operation error: {e}. Reopening file...")
 			time.sleep(0.5)
 			break
