@@ -203,60 +203,54 @@ class MainWindow(QMainWindow):
             self.ax_short.autoscale_view(True, True, True)
 
         # ==================== Plot 2: Full day, 5-minute average ====================
-        start_of_day = datetime.datetime(now.year, now.month, now.day)
-        end_of_day = start_of_day + datetime.timedelta(days=1)
-        bin_minutes = 5
-        bin_width_sec = bin_minutes * 60
+        start_day = datetime.datetime(now.year, now.month, now.day)
+        end_day   = start_day + datetime.timedelta(days=1)
+        bin_sec   = 5*60
 
-        # Filter today's data
-        indices_day = [i for i, ts in enumerate(timestamps) if ts >= start_of_day]
-        if indices_day:
-            ts_day = [timestamps[i] for i in indices_day]
-            ps_day = pressures[indices_day]
-            ts_unix = np.array([ts.timestamp() for ts in ts_day])
+        today = start_day.date()
+        if getattr(self, '_gui_day', None) != today:
+            self._gui_day = today
+            self.avg_ts.clear()
+            self.avg_ps.clear()
+            self.last_bin_timestamp = None
+            self.cache_initialized = False
 
-            # Determine which bins each point falls into
-            bin_edges = np.arange(start_of_day.timestamp(), end_of_day.timestamp(), bin_width_sec)
-            bin_indices = np.digitize(ts_unix, bin_edges)
+        ts_day  = [ts for ts in timestamps if ts >= start_day]
+        ps_day  = pressures[-len(ts_day):]  # same indexing
+        ts_unix = np.array([ts.timestamp() for ts in ts_day])
+        edges   = np.arange(start_day.timestamp(), end_day.timestamp(), bin_sec)
+        bins    = np.digitize(ts_unix, edges)
 
-            if not self.cache_initialized:
-                # INITIALIZE FULL CACHE ON FIRST RUN
-                print("Initializing full-day bin cache...")
-                for b in range(1, len(bin_edges)):
-                    bin_vals = [ps_day[i] for i in range(len(bin_indices)) if bin_indices[i] == b]
-                    if bin_vals:
-                        avg_time = datetime.datetime.fromtimestamp(bin_edges[b - 1])
-                        avg_val = np.mean(bin_vals)
-                        self.avg_ts.append(avg_time)
-                        self.avg_ps.append(avg_val)
-                        self.last_bin_timestamp = bin_edges[b - 1]
-                self.cache_initialized = True
+        if not self.cache_initialized:
+            for b in range(1, len(edges)):
+                vals = [ps_day[i] for i in range(len(bins)) if bins[i] == b]
+                if vals:
+                    self.avg_ts.append(datetime.datetime.fromtimestamp(edges[b-1]))
+                    self.avg_ps.append(np.mean(vals))
+                    self.last_bin_timestamp = edges[b-1]
+            self.cache_initialized = True
+        else:
+            latest_bin = (ts_unix[-1] // bin_sec) * bin_sec
+            if self.last_bin_timestamp is None or latest_bin > self.last_bin_timestamp:
+                start_b = datetime.datetime.fromtimestamp(latest_bin)
+                end_b   = start_b + datetime.timedelta(seconds=bin_sec)
+                vals = [p for (p, ts) in zip(ps_day, ts_day) if start_b <= ts < end_b]
+                if vals:
+                    self.avg_ts.append(start_b)
+                    self.avg_ps.append(np.mean(vals))
+                    self.last_bin_timestamp = latest_bin
 
-            else:
-                # ONLY UPDATE NEWEST BIN
-                latest_ts = ts_unix[-1]
-                current_bin_start = (latest_ts // bin_width_sec) * bin_width_sec
-                if self.last_bin_timestamp is None or current_bin_start > self.last_bin_timestamp:
-                    bin_start_time = datetime.datetime.fromtimestamp(current_bin_start)
-                    bin_end_time = bin_start_time + datetime.timedelta(seconds=bin_width_sec)
-                    bin_vals = [ps_day[i] for i, ts in enumerate(ts_day) if bin_start_time <= ts < bin_end_time]
+        self.line_day.set_data(self.avg_ts, self.avg_ps)
+        self.ax_day.set_xlim(start_day, end_day)
 
-                    if bin_vals:
-                        avg_val = np.mean(bin_vals)
-                        self.avg_ts.append(bin_start_time)
-                        self.avg_ps.append(avg_val)
-                        self.last_bin_timestamp = current_bin_start
-                        print(f"Appended new bin: {bin_start_time.strftime('%H:%M')} with {len(bin_vals)} points")
-
-            # Plot cached averages
-            self.line_day.set_data(self.avg_ts, self.avg_ps)
-            self.ax_day.set_xlim(start_of_day, end_of_day)
-            if self.avg_ps:
-                min_p, max_p = np.min(self.avg_ps), np.max(self.avg_ps)
-                pad = 0.1*(max_p-min_p) if max_p!=min_p else 0.1*max_p
-                self.ax_day.set_ylim(min_p - pad, max_p + pad)
-            self.ax_day.relim()
-            self.ax_day.autoscale_view(True, True, True)
+        if self.avg_ts:
+            ts_arr = np.array(self.avg_ts)
+            ps_arr = np.array(self.avg_ps)
+            mask   = ts_arr >= start_day
+            if mask.any():
+                mn, mx = ps_arr[mask].min(), ps_arr[mask].max()
+                pad = 0.1*(mx-mn) if mx!=mn else 0.1*mx
+                self.ax_day.set_ylim(mn-pad, mx+pad)
 
         self.canvas.draw()
         self.canvas.flush_events()
