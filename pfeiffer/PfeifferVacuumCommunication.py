@@ -92,7 +92,9 @@ class MaxiGauge:
 
 
     def disconnect(self):
-        self.s.close()
+        if self.s:
+            self.s.close()
+            self.s = None
         if self.verbose:
             print("\n Connection safely terminated.")    
 #==============================================================================    
