@@ -252,7 +252,9 @@ class MainWindow(QMainWindow):
             self.line_day.set_data(self.avg_ts, self.avg_ps)
             self.ax_day.set_xlim(start_of_day, end_of_day)
             if self.avg_ps:
-                self.ax_day.set_ylim(np.min(self.avg_ps), np.max(self.avg_ps) * 1.1)
+                min_p, max_p = np.min(self.avg_ps), np.max(self.avg_ps)
+                pad = 0.1*(max_p-min_p) if max_p!=min_p else 0.1*max_p
+                self.ax_day.set_ylim(min_p - pad, max_p + pad)
             self.ax_day.relim()
             self.ax_day.autoscale_view(True, True, True)
 
