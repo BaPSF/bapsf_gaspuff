@@ -284,7 +284,7 @@ def main():
 		except Exception as e:
 			print(f"Operation error: {e}. Reopening file...")
 			time.sleep(0.5)
-			break
+			continue
 
 		
 
