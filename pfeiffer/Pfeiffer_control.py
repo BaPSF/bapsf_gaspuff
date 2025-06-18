@@ -283,6 +283,11 @@ def main():
 
 		except Exception as e:
 			print(f"Operation error: {e}. Reopening file...")
+			if f is not None:
+				try: 
+					f.close()
+				except:
+					pass
 			time.sleep(0.5)
 			continue
 
