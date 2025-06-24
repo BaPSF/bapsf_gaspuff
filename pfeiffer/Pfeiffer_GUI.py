@@ -12,7 +12,6 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QLabel, QPus
 from PyQt5.QtCore import QThread, pyqtSignal, QObject
 from PyQt5.QtGui import QFont
 
-from matplotlib.dates import HourLocator, DateFormatter
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -244,9 +243,10 @@ class MainWindow(QMainWindow):
         self.ax_day.set_title(f"Pressure (Full Day, 5-min Average) [{date_str}]")
         self.line_day.set_data(self.avg_ts, self.avg_ps)
         self.ax_day.set_xlim(start_day, end_day)
-        self.ax_day.xaxis.set_major_locator(HourLocator(interval=2))
-        self.ax_day.xaxis.set_major_formatter(DateFormatter('%H:%M'))
-        self.fig.autofmt_xdate()
+        ticks = [start_day + datetime.timedelta(hours=2*i) for i in range(13)]
+        self.ax_day.set_xticks(ticks)
+        labels = [t.strftime('%H:%M') for t in ticks]
+        self.ax_day.set_xticklabels(labels, rotation=45, ha='right')
 
         if self.avg_ts:
             ts_arr = np.array(self.avg_ts)
