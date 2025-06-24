@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QLabel, QPus
 from PyQt5.QtCore import QThread, pyqtSignal, QObject
 from PyQt5.QtGui import QFont
 
+from matplotlib.dates import HourLocator, DateFormatter
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -132,7 +133,7 @@ class MainWindow(QMainWindow):
 
         # Create a figure and a canvas for the figure
         self.fig = Figure(figsize=(15,15))
-        plt.rcParams['font.size'] = 12
+        plt.rcParams['font.size'] = 20
         self.ax_short = self.fig.add_subplot(211)  
         self.ax_day = self.fig.add_subplot(212)
         self.canvas = FigureCanvas(self.fig)  # Create a canvas for the figure
@@ -149,7 +150,6 @@ class MainWindow(QMainWindow):
         self.ax_short.set_ylabel("Pressure (Torr)")
         self.ax_short.grid(True)
 
-        self.ax_day.set_title("Pressure (Full Day, 5-min Average)")
         self.ax_day.set_xlabel("Time")
         self.ax_day.set_ylabel("Pressure (Torr)")
         self.ax_day.grid(True)
@@ -240,8 +240,13 @@ class MainWindow(QMainWindow):
                     self.avg_ps.append(np.mean(vals))
                     self.last_bin_timestamp = latest_bin
 
+        date_str = start_day.strftime('%Y-%m-%d')
+        self.ax_day.set_title(f"Pressure (Full Day, 5-min Average) [{date_str}]")
         self.line_day.set_data(self.avg_ts, self.avg_ps)
         self.ax_day.set_xlim(start_day, end_day)
+        self.ax_day.xaxis.set_major_locator(HourLocator(interval=2))
+        self.ax_day.xaxis.set_major_formatter(DateFormatter('%H:%M'))
+        self.fig.autofmt_xdate()
 
         if self.avg_ts:
             ts_arr = np.array(self.avg_ts)
