@@ -21,6 +21,9 @@ from PfeifferVacuumCommunication import MaxiGauge, MaxiGaugeError #updated by Ji
 #===CHANGE THE FOLLOWING PARAMETERS IF NECCESSARY=================================================================================================
 ip_address = "192.168.7.44"
 hdf5_path = r"C:\data\gauge"
+# h5clear executable: prefer PATH, fall back to vendored install location on the lab PC
+H5CLEAR_CMD = "h5clear"
+H5CLEAR_FALLBACK = r"C:/Program Files/HDF_Group/HDF5/1.14.6/bin/h5clear.exe"
 #===============================================================================================================================================
 #===============================================================================================================================================
 
@@ -163,10 +166,18 @@ def log_connection_event(event_time, status, log_dir="C:\\data\\gauge", error_me
 
 #===============================================================================================================================================
 
+def run_h5clear(target):
+	"""Run h5clear on a file, trying PATH first then the fallback install path."""
+	try:
+		subprocess.run([H5CLEAR_CMD, "-s", target], check=True)
+	except (FileNotFoundError, subprocess.CalledProcessError):
+		subprocess.run([H5CLEAR_FALLBACK, "-s", target], check=True)
+
 def main():
 
 	pfController = MaxiGauge(ip_addr=ip_address)
-	count = 0 
+	count = 0
+	f = None  # ensure name exists for outer except handler before first open
 	date = datetime.date.today()
 	hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
 
@@ -179,12 +190,12 @@ def main():
 		if "SWMR" in str(e) or "already open for write" in str(e):
 			print("SWMR lock detected during init. Attempting h5clear recovery...")
 			try:
-				subprocess.run(["h5clear", "-s", hdf5_ifn], check=True)
+				run_h5clear(hdf5_ifn)
 				print("h5clear succeeded. Retrying init_hdf5_file...")
 				init_hdf5_file(hdf5_ifn, pfController)
-			except subprocess.CalledProcessError as h5clear_err:
+			except (subprocess.CalledProcessError, FileNotFoundError) as h5clear_err:
 				print("h5clear failed during init:", h5clear_err)
-				return  
+				return
 		else:
 			raise  
 
@@ -269,13 +280,13 @@ def main():
 			if "SWMR" in str(e) or "already open for write" in str(e):
 				print("Detected SWMR lock. Attempting auto-recovery using h5clear...")
 				try:
-					subprocess.run(["C:/Program Files/HDF_Group/HDF5/1.14.6/bin/h5clear.exe", "-s", hdf5_ifn], check=True) #update 5/1
+					run_h5clear(hdf5_ifn)
 					print("h5clear completed successfully. Retrying...")
 					time.sleep(2)
-					continue  
-				except subprocess.CalledProcessError as h5clear_err:
+					continue
+				except (subprocess.CalledProcessError, FileNotFoundError) as h5clear_err:
 					print("h5clear failed:", h5clear_err)
-					break 
+					break
 			else:
 				print("Unable to open HDF5 file. Retrying...")
 				time.sleep(0.01)

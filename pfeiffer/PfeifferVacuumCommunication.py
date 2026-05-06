@@ -73,13 +73,10 @@ class MaxiGauge:
                     retry_count += 1
                     print('...connection refused, at',time.ctime(),' Is motor_server process running on remote machine?',
                             '  Retry', retry_count, '/', RETRIES, "on", str(self.ip_addr))
-                except TimeoutError:
-                    retry_count += 1
-                    print('...connection attempt timed out, at',time.ctime(),
-                            '  Retry', retry_count, '/', RETRIES, "on", str(self.ip_addr))
-                    time.sleep(0.5) #05/08/2025
-                    raise
-                except socket.timeout: #05/08/2025
+                except (TimeoutError, socket.timeout):
+                    # In Python 3.10+ socket.timeout is an alias for TimeoutError;
+                    # one handler covers both. Retry rather than re-raising so the
+                    # RETRIES budget is honored.
                     retry_count += 1
                     print('...connection attempt timed out, at',time.ctime(),
                             '  Retry', retry_count, '/', RETRIES, "on", str(self.ip_addr))
@@ -225,7 +222,7 @@ class MaxiGauge:
                 return gas_type
             except Exception as e:
                 if attempt == retries -1:
-                    raise MaxiGaugeError(f"Gas type retrieval faileda after {retries} attempts: {e}")
+                    raise MaxiGaugeError(f"Gas type retrieval failed after {retries} attempts: {e}")
                 time.sleep(0.2)
 
 
