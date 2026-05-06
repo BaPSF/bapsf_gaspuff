@@ -57,11 +57,12 @@ class MaxiGauge:
             if self.verbose:
                 print("Looking for Pfeiffer gauge controller at", self.ip_addr, "\n", flush=True)
 
-            RETRIES = 30
+            RETRIES = 300
             retry_count = 0
             while retry_count < RETRIES:
                 try:
                     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(2) # if timeout, socket.timeout except will catch it, 05/08/2025
                     s.connect((self.ip_addr, self.SERVER_PORT))
                     if self.verbose:
                         print('...connection established at',time.ctime())
@@ -72,10 +73,14 @@ class MaxiGauge:
                     retry_count += 1
                     print('...connection refused, at',time.ctime(),' Is motor_server process running on remote machine?',
                             '  Retry', retry_count, '/', RETRIES, "on", str(self.ip_addr))
-                except TimeoutError:
+                except (TimeoutError, socket.timeout):
+                    # In Python 3.10+ socket.timeout is an alias for TimeoutError;
+                    # one handler covers both. Retry rather than re-raising so the
+                    # RETRIES budget is honored.
                     retry_count += 1
                     print('...connection attempt timed out, at',time.ctime(),
                             '  Retry', retry_count, '/', RETRIES, "on", str(self.ip_addr))
+                    time.sleep(0.5)
                 except KeyboardInterrupt:
                     sys.exit('_______Halt due to CRTL_C________')
 
@@ -85,7 +90,9 @@ class MaxiGauge:
 
 
     def disconnect(self):
-        self.s.close()
+        if self.s:
+            self.s.close()
+            self.s = None
         if self.verbose:
             print("\n Connection safely terminated.")    
 #==============================================================================    
@@ -183,30 +190,40 @@ class MaxiGauge:
             raise MaxiGaugeError("Problem interpreting the returned line:\n%s" % reading)
         return status, pressure
     
-    def get_all_pressure_reading(self):
-
-        try:
-            resp = np.array(self.send(b"PRX", 1)[0].split(','))
-        except:
-            raise MaxiGaugeError("Problem interpreting the returned line:\n%s" % resp)
-        
-        statarr = [int(stat) for stat in resp[::2]]
-        presarr = [float(pres) for pres in resp[1::2]]
-        
-        return statarr, presarr
+    def get_all_pressure_reading(self): #05/08/2025
+        for attempt in range(10): #05/14/2025
+            try:
+                test = self.send(b"PRX", 1)[0] #05/13/2025
+                if '\x06' in test or "ACK" in test: 
+                    raise MaxiGaugeError("No response from gauge, please check the connection.")
+                resp = np.array(self.send(b"PRX", 1)[0].split(','))
+                statarr = [int(stat) for stat in resp[::2]]
+                presarr = [float(pres) for pres in resp[1::2]]
+                return statarr, presarr
+            except Exception as e:
+                if attempt == 9:
+                    raise MaxiGaugeError(f"Problem with pressure response: {e}") 
+                time.sleep(0.2)
         
     
-    def get_device_id(self):
-        resp = self.send(b"TID", 1)
-        device_id = resp[0].split(',')
-        return device_id
+    def get_device_id(self): #05/08/2025
+        try:
+            resp = self.send(b"TID", 1)
+            return resp[0].split(',')
+        except Exception as e:
+            raise MaxiGaugeError(f"Device ID retrieval failed: {e}")
 
-    def get_gas_type(self):
-        resp = self.send(b"GAS", 1)
-        gas_type = resp[0].split(',')
-        gas_type = [int(gas) for gas in gas_type]
-        return gas_type
-
+    def get_gas_type(self, retries = 3): #05/08/2025
+        for attempt in range(retries): #05/13/2025
+            try:
+                resp = self.send(b"GAS", 1)
+                gas_type = resp[0].split(',')
+                gas_type = [int(gas) for gas in gas_type]
+                return gas_type
+            except Exception as e:
+                if attempt == retries -1:
+                    raise MaxiGaugeError(f"Gas type retrieval failed after {retries} attempts: {e}")
+                time.sleep(0.2)
 
 
 class MaxiGaugeError(Exception):
