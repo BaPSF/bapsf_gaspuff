@@ -15,6 +15,7 @@ import multiprocessing as mp
 import os
 import queue
 import time
+from typing import NamedTuple, Sequence, Union
 
 import h5py
 import numpy as np
@@ -43,7 +44,28 @@ FIRST_METER_TIMEOUT_S = 6      # First queue.get may need to wait for the trigge
 SECOND_METER_TIMEOUT_S = 1     # Second meter should already be ready by then
 LOOP_SLEEP_S = 0.1
 RETRY_BACKOFF_S = 1.0
+ERROR_BACKOFF_S = 0.5
 MAX_FLOW_METER_RETRIES = 3
+
+# Mapping from slave address → HDF5 group name. Single source of truth so that
+# downstream helpers don't reach for ADDR_EAST / ADDR_WEST module globals.
+ADDR_TO_GROUP = {ADDR_EAST: "FlowMeter_East", ADDR_WEST: "FlowMeter_West"}
+
+
+# --- Data types -------------------------------------------------------------
+class MeterShot(NamedTuple):
+    """One shot's worth of data flowing from a worker to the main process.
+
+    ``values`` is normally a sequence of floats; on acquisition failure the
+    worker stores ``np.nan`` as a scalar sentinel — see :pymeth:`is_failure`.
+    """
+    slave_address: int
+    values: Union[Sequence[float], float]
+    timestamp: float
+
+    @property
+    def is_failure(self) -> bool:
+        return np.isscalar(self.values) and np.isnan(self.values)
 
 
 class GPIOHandler:
@@ -173,15 +195,15 @@ def read_flowmeter(q_trigger, q_data, flow_meter_port, slave_address, wait_time=
                     with fm:
                         time.sleep(wait_time)
                         buff = fm.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED, max_reads=3)
-                        q_data.put((slave_address, buff.values, timestamp))
+                        q_data.put(MeterShot(slave_address, buff.values, timestamp))
                         consecutive_errors = 0  # Reset error counter on successful read
 
                 except Exception as e:
                     consecutive_errors += 1
                     print(f"Flow meter {slave_address} error ({consecutive_errors}/{MAX_FLOW_METER_RETRIES}): {e}")
 
-                    # Send NaN data on failure
-                    q_data.put((slave_address, np.nan, timestamp))
+                    # Send NaN sentinel on failure so the main process always sees a pair.
+                    q_data.put(MeterShot(slave_address, np.nan, timestamp))
 
                     # Close and reset connection
                     if fm is not None:
@@ -214,54 +236,83 @@ def read_flowmeter(q_trigger, q_data, flow_meter_port, slave_address, wait_time=
                 pass
 
 
-def save_flow_data(f, flow_data, timestamp, is_east):
+# --- HDF5 write helpers -----------------------------------------------------
+def _ensure_data_length(f, length):
+    """Establish or validate the per-shot sample length for the file.
+
+    On the first successful shot, records ``f.attrs['data_length']`` and
+    widens every existing ``flow_data`` dataset to ``(0, length)``. On
+    subsequent shots, validates ``length`` matches.
+
+    Returns the established length, or ``None`` if a mismatch is detected.
     """
-    Save flow data to appropriate group in HDF5 file.
-    Handles both normal data and NaN data from failed readings.
+    current = f.attrs.get('data_length')
+    if current is None:
+        f.attrs['data_length'] = length
+        for grp_name in ("FlowMeter_East", "FlowMeter_West"):
+            if grp_name in f:
+                f[grp_name]["flow_data"].resize((0, length))
+        return length
+    if current != length:
+        return None
+    return current
+
+
+def _nan_payload(f):
+    """Return a NaN-filled array sized to the file's per-shot sample length.
+
+    Returns ``None`` if the length has not yet been established (no successful
+    shot has been written), in which case the failure cannot be persisted.
     """
-    data_length = f.attrs.get('data_length')
+    length = f.attrs.get('data_length')
+    if length is None:
+        return None
+    return np.full(length, np.nan)
 
-    # If flow_data is NaN (failed reading), create array of NaNs
-    if np.isscalar(flow_data) and np.isnan(flow_data):
-        if data_length is None:
-            print("Cannot save NaN data - data_length not yet established")
-            return False
-        flow_data = np.full(data_length, np.nan)
-    else:
-        # Normal data handling
-        if data_length is None:
-            # First successful reading establishes data length
-            data_length = len(flow_data)
-            f.attrs['data_length'] = data_length
-            # Resize datasets to proper width
-            for grp_name in ["FlowMeter_East", "FlowMeter_West"]:
-                if grp_name in f:
-                    f[grp_name]["flow_data"].resize((0, data_length))
-        elif len(flow_data) != data_length:
-            print(f"Warning: Data length mismatch. Expected {data_length}, got {len(flow_data)}")
-            return False
 
-    grp_name = "FlowMeter_East" if is_east else "FlowMeter_West"
-    grp = f[grp_name]
-
-    # Extend datasets
+def append_shot(f, group_name, values, timestamp):
+    """Append one shot's ``values`` and ``timestamp`` to ``group_name``."""
+    grp = f[group_name]
     flow_dataset = grp["flow_data"]
     time_dataset = grp["timestamp"]
 
     flow_dataset.resize((flow_dataset.shape[0] + 1, flow_dataset.shape[1]))
     time_dataset.resize((time_dataset.shape[0] + 1,))
 
-    # Save data
-    flow_dataset[-1, :] = flow_data
+    flow_dataset[-1, :] = values
     time_dataset[-1] = timestamp
 
+
+def save_flow_data(f, flow_data, timestamp, group_name):
+    """Persist one shot to ``group_name``, handling the NaN failure sentinel.
+
+    Returns ``True`` on success, ``False`` when the shot must be dropped
+    (length mismatch, or a failure arrived before the first good shot
+    established a sample length).
+    """
+    is_failure = np.isscalar(flow_data) and np.isnan(flow_data)
+
+    if is_failure:
+        payload = _nan_payload(f)
+        if payload is None:
+            print("Cannot save NaN data - data_length not yet established")
+            return False
+    else:
+        established = _ensure_data_length(f, len(flow_data))
+        if established is None:
+            print(f"Warning: Data length mismatch. Expected {f.attrs['data_length']}, got {len(flow_data)}")
+            return False
+        payload = flow_data
+
+    append_shot(f, group_name, payload, timestamp)
     return True
 
 
-def _format_meter_label(slave_addr, payload):
+# --- Per-trigger orchestration ---------------------------------------------
+def _format_meter_label(shot):
     """Format the per-meter status string used in the trigger log line."""
-    name = 'East (#2)' if slave_addr == ADDR_EAST else 'West (#1)'
-    error_tag = '[ERROR]' if np.isscalar(payload) and np.isnan(payload) else ''
+    name = 'East (#2)' if shot.slave_address == ADDR_EAST else 'West (#1)'
+    error_tag = '[ERROR]' if shot.is_failure else ''
     return f"{name} {error_tag}"
 
 
@@ -278,22 +329,88 @@ def _roll_hdf5_file_for_new_day(current_path, current_time, east_info, west_info
     return new_path
 
 
-def _save_meter_pair(hdf5_file, first_meter_data, second_meter_data, first_msg, second_msg):
-    """Open the HDF5 file once and append both meters' shots, with status prints."""
+def _save_meter_pair(hdf5_file, first_shot, second_shot):
+    """Open the HDF5 file once and append both shots, with status prints."""
     with h5py.File(hdf5_file, 'a', libver='latest') as f:
         # Enable SWMR mode for better crash resistance
         f.swmr_mode = True
 
-        if not save_flow_data(f, *first_meter_data):
+        if not save_flow_data(f, first_shot.values, first_shot.timestamp,
+                              ADDR_TO_GROUP[first_shot.slave_address]):
             print("Data length error in first flow meter")
-        print(_format_meter_label(first_msg[0], first_msg[1]), end=', ', flush=True)
+        print(_format_meter_label(first_shot), end=', ', flush=True)
 
-        if not save_flow_data(f, *second_meter_data):
+        if not save_flow_data(f, second_shot.values, second_shot.timestamp,
+                              ADDR_TO_GROUP[second_shot.slave_address]):
             print("Data length error in second flow meter")
-        print(_format_meter_label(second_msg[0], second_msg[1]), flush=True)
+        print(_format_meter_label(second_shot), flush=True)
 
         # Explicitly flush to disk
         f.flush()
+
+
+def _trigger_meters(q_trigger, east_process, west_process):
+    """Send TRIG to each living worker. Return False if both are dead."""
+    if east_process.is_alive():
+        q_trigger.put('TRIG')
+    else:
+        print("East process is dead. ", end='')
+
+    if west_process.is_alive():
+        q_trigger.put('TRIG')
+    else:
+        print("West process is dead. ", end='')
+
+    if not east_process.is_alive() and not west_process.is_alive():
+        print("Both flow meter processes are dead. Exiting.")
+        return False
+    return True
+
+
+def _collect_meter_shots(q_data):
+    """Drain the two MeterShot messages produced by one trigger.
+
+    Returns ``(first, second)`` or ``None`` if either ``queue.get`` times out.
+    """
+    try:
+        first = q_data.get(timeout=FIRST_METER_TIMEOUT_S)
+        second = q_data.get(timeout=SECOND_METER_TIMEOUT_S)
+        return first, second
+    except queue.Empty:
+        print("Timeout waiting for flow meter data")
+        return None
+
+
+def _handle_trigger(q_trigger, q_data, east_process, west_process,
+                    hdf5_file, east_info, west_info):
+    """Run one trigger cycle.
+
+    Returns the path to use for the next iteration, or ``None`` to signal
+    that the main loop should exit (both workers are dead).
+    """
+    if not _trigger_meters(q_trigger, east_process, west_process):
+        return None
+
+    print("\n" + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ': ', end='')
+
+    try:
+        hdf5_file = _roll_hdf5_file_for_new_day(
+            hdf5_file, time.time(), east_info, west_info,
+        )
+    except Exception as e:
+        print(f"Error checking file date: {e}")
+        return hdf5_file
+
+    shots = _collect_meter_shots(q_data)
+    if shots is None:
+        return hdf5_file
+
+    try:
+        _save_meter_pair(hdf5_file, shots[0], shots[1])
+    except OSError as e:
+        print(f"Error saving to HDF5 file: {e}")
+
+    return hdf5_file
 
 
 def main():
@@ -326,65 +443,22 @@ def main():
         print("GPIO setup - complete")
 
         while True:
-            # Wait for trigger with configured timeout
-            if gpio_handler.wait_for_trigger(timeout_ms=TRIGGER_TIMEOUT_MS):
-                # Trigger flow meters
-                if east_process.is_alive():
-                    q_trigger.put('TRIG')
-                else:
-                    print("East process is dead. ", end='')
+            if not gpio_handler.wait_for_trigger(timeout_ms=TRIGGER_TIMEOUT_MS):
+                continue
 
-                if west_process.is_alive():
-                    q_trigger.put('TRIG')
-                else:
-                    print("West process is dead. ", end='')
+            try:
+                next_path = _handle_trigger(
+                    q_trigger, q_data, east_process, west_process,
+                    hdf5_file, east_info, west_info,
+                )
+            except Exception as e:
+                print(f"Error in trigger handling: {e}")
+                time.sleep(ERROR_BACKOFF_S)
+                continue
 
-                if not east_process.is_alive() and not west_process.is_alive():
-                    print("Both flow meter processes are dead. Exiting.")
-                    break
-
-                try:
-                    print("\n" + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ': ', end='')
-
-                    # Roll the HDF5 file over if the day changed since file creation.
-                    current_time = time.time()
-                    try:
-                        hdf5_file = _roll_hdf5_file_for_new_day(
-                            hdf5_file, current_time, east_info, west_info,
-                        )
-                    except Exception as e:
-                        print(f"Error checking file date: {e}")
-                        continue
-
-                    # Get data from both flow meters first
-                    try:
-                        # First flow meter
-                        east_msg = q_data.get(timeout=FIRST_METER_TIMEOUT_S)
-                        first_meter_data = (east_msg[1], east_msg[2], east_msg[0] == ADDR_EAST)
-
-                        # Second flow meter
-                        west_msg = q_data.get(timeout=SECOND_METER_TIMEOUT_S)
-                        second_meter_data = (west_msg[1], west_msg[2], west_msg[0] == ADDR_EAST)
-
-                    except queue.Empty:
-                        print("Timeout waiting for flow meter data")
-                        continue
-
-                    # Then save data in a single file operation
-                    try:
-                        _save_meter_pair(
-                            hdf5_file,
-                            first_meter_data, second_meter_data,
-                            east_msg, west_msg,
-                        )
-                    except OSError as e:
-                        print(f"Error saving to HDF5 file: {e}")
-                        continue
-
-                except Exception as e:
-                    print(f"Error in trigger handling: {e}")
-                    time.sleep(0.5)
-                    continue
+            if next_path is None:
+                break
+            hdf5_file = next_path
 
     except KeyboardInterrupt:
         print("Interrupting processes...")
