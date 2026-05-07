@@ -2,18 +2,21 @@
 
 Exposes a single :class:`FlowMeter` that opens a serial connection, configures
 the user-defined unit (standard liter / minute), and provides convenience
-read methods for buffered and single-sample acquisition.
+methods for buffered acquisition.
 """
+
+from typing import NamedTuple
 
 from sensirion_shdlc_driver import ShdlcSerialPort, ShdlcConnection
 from sensirion_shdlc_sfc5xxx import Sfc5xxxShdlcDevice, Sfc5xxxScaling, \
-    Sfc5xxxValveInputSource, Sfc5xxxUnitPrefix, Sfc5xxxUnit, \
-    Sfc5xxxUnitTimeBase, Sfc5xxxMediumUnit
-import time
-import numpy as np
+    Sfc5xxxUnitPrefix, Sfc5xxxUnit, Sfc5xxxUnitTimeBase, Sfc5xxxMediumUnit
 
-# Internal sample rate of the SFC5xxx flow-meter buffer.
-SAMPLE_RATE_HZ = 1000
+
+class FlowReading(NamedTuple):
+    """Result of a duration-bounded buffered acquisition."""
+    values: list
+    sampling_time: float  # seconds between samples, reported by the device
+    lost_values: int      # ring-buffer overrun count, summed across reads
 
 
 class FlowMeter(object):
@@ -39,17 +42,38 @@ class FlowMeter(object):
             # Print device information upon initialization
             self._print_device_info()
 
+            self._warn_if_firmware_too_old()
+
+            # Manual §5.7.1: "Loading the same calibration again is not a problem
+            # and will not cause a write operation." Safe to call unconditionally.
             self.device.activate_calibration(3)
+
             self.unit = Sfc5xxxMediumUnit(
                 Sfc5xxxUnitPrefix.ONE,
                 Sfc5xxxUnit.STANDARD_LITER,
                 Sfc5xxxUnitTimeBase.MINUTE
             )
-            self.device.set_user_defined_medium_unit(self.unit)
+            # Manual §5.4.1: this command writes NV memory. Skip the write if
+            # the device already holds the desired unit.
+            if self.device.get_user_defined_medium_unit() != self.unit:
+                self.device.set_user_defined_medium_unit(self.unit)
         except Exception as e:
             if hasattr(self, 'port'):
                 self.port.close()
             raise RuntimeError(f"Failed to initialize flow meter: {e}")
+
+    def _warn_if_firmware_too_old(self):
+        """Warn when firmware predates V1.40 (USER_DEFINED scaling support)."""
+        try:
+            version = self.device.get_version()
+            fw = version.firmware
+            if (fw.major, fw.minor) < (1, 40):
+                print(
+                    f"Warning: flow meter firmware {fw.major}.{fw.minor:02d} is "
+                    "below V1.40; Sfc5xxxScaling.USER_DEFINED is not supported."
+                )
+        except Exception as e:
+            print(f"Warning: could not check firmware version: {e}")
 
     def _print_device_info(self):
         """Print device information and available calibration blocks."""
@@ -85,60 +109,45 @@ class FlowMeter(object):
         self.device.set_slave_address(slave_address)
 
 
-    def get_reading(self, duration: float) -> list:
+    def get_reading(self, duration: float) -> FlowReading:
         """
-        Retrieve flow readings from the flow meter for a fixed duration
-        by repeatedly reading from its buffer. Duration in unit of seconds.
-        """
-        reading = []
-        target_samples = int(duration * SAMPLE_RATE_HZ)
-        while len(reading) <= target_samples:
-            buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
-            reading.extend(buffer.values)
-        return reading
+        Retrieve flow readings for a fixed duration by repeatedly draining the
+        device's ring buffer. ``duration`` in seconds.
 
-    def get_single_buffer(self) -> list:
+        The target sample count is derived from the device-reported
+        ``sampling_time`` on the first response, not assumed. Lost-value counts
+        from the SHDLC ring buffer (manual §5.2.3) are accumulated and surfaced
+        via the returned :class:`FlowReading`; a non-zero count is also printed.
         """
-        Read one buffer chunk from the flow meter and return its samples.
+        first = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
+        sampling_time = first.sampling_time
+        lost = first.lost_values
+        values = list(first.values)
 
-        Equivalent to a single :py:meth:`read_measured_value_buffer` call with
-        ``max_reads=1``; useful for low-latency polling.
+        target_samples = int(duration / sampling_time) if sampling_time > 0 else 0
+        while len(values) < target_samples:
+            buf = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
+            values.extend(buf.values)
+            lost += buf.lost_values
+
+        if lost > 0:
+            print(f"Flow meter ring-buffer overrun: {lost} samples lost")
+
+        return FlowReading(values=values, sampling_time=sampling_time, lost_values=lost)
+
+    def get_single_buffer(self, max_reads: int = 100):
         """
-        buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED, max_reads=1)
-        return buffer.values
+        Read one buffered acquisition and return the full
+        :class:`Sfc5xxxReadBufferResponse`.
 
-    def get_reading_single_cycle(self, duration: float) -> list:
+        Callers that need just the samples should use ``.values``; the response
+        also carries ``.sampling_time``, ``.lost_values`` and
+        ``.remaining_values`` (manual §5.2.3) which the caller is expected to
+        inspect.
         """
-        Acquire ``duration`` seconds of flow data using single-sample reads.
-
-        Unlike :py:meth:`get_reading`, this does not pull from the device's
-        buffer — it issues one ``read_measured_value`` call per sample at the
-        nominal :data:`SAMPLE_RATE_HZ`. Slower, but the timing of each sample
-        is controlled by the host loop.
-        """
-        reading = []
-        n = int(duration * SAMPLE_RATE_HZ)
-        for i in range(n):
-            val = self.device.read_measured_value(Sfc5xxxScaling.USER_DEFINED)
-            reading.append(val)
-        return reading
-
-    def get_pre_and_post_trigger_samples(self, pretrigger_samples: int = 10, posttrigger_samples: int = 90) -> list:
-        """
-        Retrieve pre-trigger and post-trigger samples from the flow meter buffer.
-
-        TODO: verify which end of ``buffer.values`` is the most recent — the
-        slice below assumes the tail holds the newest samples.
-        """
-        samples = []
-        buffer = self.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED)
-        # Take the most-recent ``pretrigger_samples`` already in the buffer.
-        samples.extend(buffer.values[-pretrigger_samples:])
-        # Then poll one sample at a time for the post-trigger window.
-        for i in range(posttrigger_samples):
-            samples.append(self.device.read_measured_value(Sfc5xxxScaling.USER_DEFINED))
-
-        return samples
+        return self.device.read_measured_value_buffer(
+            Sfc5xxxScaling.USER_DEFINED, max_reads=max_reads
+        )
 
     def __enter__(self):
         return self

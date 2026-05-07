@@ -58,10 +58,13 @@ class MeterShot(NamedTuple):
 
     ``values`` is normally a sequence of floats; on acquisition failure the
     worker stores ``np.nan`` as a scalar sentinel — see :pymeth:`is_failure`.
+    ``sampling_time`` is the device-reported seconds-between-samples for this
+    shot (``np.nan`` on failure).
     """
     slave_address: int
     values: Union[Sequence[float], float]
     timestamp: float
+    sampling_time: float
 
     @property
     def is_failure(self) -> bool:
@@ -153,7 +156,8 @@ def init_hdf5_file(file_name, east_info=None, west_info=None):
         f.attrs['created'] = ct
         print("HDF5 file created", time.strftime("%Y-%m-%d %H:%M:%S", ct))
         f.attrs['description'] = "Flow meter data from Sensirion flow meters"
-        f.attrs['data_length'] = None  # Will be set when first data is received
+        # data_length is established by the first successful shot; until then,
+        # f.attrs.get('data_length') returns None.
 
         # Create groups for each flow meter
         for name, info in [("East", east_info), ("West", west_info)]:
@@ -192,18 +196,19 @@ def read_flowmeter(q_trigger, q_data, flow_meter_port, slave_address, wait_time=
                         fm = FlowMeter(port=flow_meter_port, slave_address=slave_address)
                         consecutive_errors = 0  # Reset error counter on successful connection
 
-                    with fm:
-                        time.sleep(wait_time)
-                        buff = fm.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED, max_reads=3)
-                        q_data.put(MeterShot(slave_address, buff.values, timestamp))
-                        consecutive_errors = 0  # Reset error counter on successful read
+                    time.sleep(wait_time)
+                    buff = fm.device.read_measured_value_buffer(Sfc5xxxScaling.USER_DEFINED, max_reads=3)
+                    if buff.lost_values > 0:
+                        print(f"Flow meter {slave_address} ring-buffer overrun: {buff.lost_values} samples lost")
+                    q_data.put(MeterShot(slave_address, buff.values, timestamp, buff.sampling_time))
+                    consecutive_errors = 0  # Reset error counter on successful read
 
                 except Exception as e:
                     consecutive_errors += 1
                     print(f"Flow meter {slave_address} error ({consecutive_errors}/{MAX_FLOW_METER_RETRIES}): {e}")
 
                     # Send NaN sentinel on failure so the main process always sees a pair.
-                    q_data.put(MeterShot(slave_address, np.nan, timestamp))
+                    q_data.put(MeterShot(slave_address, np.nan, timestamp, float('nan')))
 
                     # Close and reset connection
                     if fm is not None:
@@ -283,8 +288,12 @@ def append_shot(f, group_name, values, timestamp):
     time_dataset[-1] = timestamp
 
 
-def save_flow_data(f, flow_data, timestamp, group_name):
+def save_flow_data(f, flow_data, timestamp, group_name, sampling_time=None):
     """Persist one shot to ``group_name``, handling the NaN failure sentinel.
+
+    On the first successful (non-NaN) shot for a given group, records the
+    device-reported ``sampling_time`` (seconds between samples) as a group
+    attribute so downstream analysis doesn't have to guess the rate.
 
     Returns ``True`` on success, ``False`` when the shot must be dropped
     (length mismatch, or a failure arrived before the first good shot
@@ -303,6 +312,10 @@ def save_flow_data(f, flow_data, timestamp, group_name):
             print(f"Warning: Data length mismatch. Expected {f.attrs['data_length']}, got {len(flow_data)}")
             return False
         payload = flow_data
+        if sampling_time is not None and not np.isnan(sampling_time):
+            grp = f[group_name]
+            if 'sampling_time' not in grp.attrs:
+                grp.attrs['sampling_time'] = sampling_time
 
     append_shot(f, group_name, payload, timestamp)
     return True
@@ -336,12 +349,14 @@ def _save_meter_pair(hdf5_file, first_shot, second_shot):
         f.swmr_mode = True
 
         if not save_flow_data(f, first_shot.values, first_shot.timestamp,
-                              ADDR_TO_GROUP[first_shot.slave_address]):
+                              ADDR_TO_GROUP[first_shot.slave_address],
+                              sampling_time=first_shot.sampling_time):
             print("Data length error in first flow meter")
         print(_format_meter_label(first_shot), end=', ', flush=True)
 
         if not save_flow_data(f, second_shot.values, second_shot.timestamp,
-                              ADDR_TO_GROUP[second_shot.slave_address]):
+                              ADDR_TO_GROUP[second_shot.slave_address],
+                              sampling_time=second_shot.sampling_time):
             print("Data length error in second flow meter")
         print(_format_meter_label(second_shot), flush=True)
 
