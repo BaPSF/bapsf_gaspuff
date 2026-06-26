@@ -96,15 +96,13 @@ class Worker(QObject):
                 else:
                     print("Skipping emit due to invalid data types.") 
                 
-                QThread.msleep(500)  # Sleep for 1 second
+                QThread.msleep(500)
             except OSError as e:
                 if "unable to lock file" in str(e):
                     print("File temporarily locked by writer. Retry in 1s...")
                 else:
                     print(f"HDF5 read error: {e}")
                 QThread.msleep(1000)
-
-
 
 
 class MainWindow(QMainWindow):
