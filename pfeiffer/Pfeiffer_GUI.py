@@ -30,7 +30,7 @@ sensor_number = 1
 n_points = 10000
 #===============================================================================================================================================
 
-def get_latest_file(dir_path=r"C:\data\gauge"):
+def get_latest_file(dir_path=r"Z:\gauge"):
     """
     This function returns the latest file in a directory.
 
