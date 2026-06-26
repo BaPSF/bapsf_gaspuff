@@ -134,14 +134,15 @@ class MainWindow(QMainWindow):
 
         # Create a button to start the plot
         button = QPushButton("Start Plot")
-        button.setFont(QFont("Arial", 24)) 
+        button.setFont(QFont("Arial", 24))
 
         self.canvas = FigureCanvas()
         self.toolbar = NavigationToolbar(self.canvas, parent=self)
 
         # Create a figure and a canvas for the figure
-        plt.rcParams['font.size'] = 20
-        self.ax_short = self.fig.add_subplot(211)  
+        # self.fig = Figure(figsize=(15,15))
+        plt.rcParams['font.size'] = 16
+        self.ax_short = self.fig.add_subplot(211)
         self.ax_day = self.fig.add_subplot(212)
 
         # Create the plot lines
