@@ -194,6 +194,14 @@ class MainWindow(QMainWindow):
         formatter.set_powerlimits((0, 0))
         self.ax_short.yaxis.set_major_formatter(formatter)
 
+        # x-axis formatter
+        formatter = ticker.FuncFormatter(self._tminus_formatter)
+        self.ax_short.xaxis.set_major_formatter(formatter)
+        # leaving this here as a template if the tick labels need to be rotated
+        # self.ax_short.tick_params("x", labelrotation=20)
+        # for label in self.ax_short.get_xticklabels():
+        #     label.set_horizontalalignment("right")
+
         self.ax_short.set_xlim(-30, 2)
 
     def _setup_day_plot(self):
@@ -213,6 +221,20 @@ class MainWindow(QMainWindow):
             title = f"{title} [{day}]"
 
         return title
+
+    @staticmethod
+    def _tminus_formatter(x, pos):
+        hours = int(abs(x) // 3600)
+        minutes = int((abs(x) % 3600) // 60)
+        seconds = int(abs(x) % 60)
+
+        if x > 0:
+            return f"T+{seconds:02d}s"
+
+        if x < 0:
+            return f"T-{seconds:02d}s"
+
+        return "T-0"
 
     def start_plot(self):
         self.thread.start()  # Start the thread, which starts worker.run
@@ -236,8 +258,10 @@ class MainWindow(QMainWindow):
         indices_short = [i for i, ts in enumerate(timestamps) if ts >= time_30s]
 
         if indices_short:
-            ts_short = [timestamps[i] for i in indices_short]
+            ts_short = [(timestamps[i] - now).total_seconds() for i in indices_short]
             ps_short = pressures[indices_short]
+
+            self.ax_short.set_title(f"T={now.strftime("%H:%M:%S")}")
             self.line_short.set_data(ts_short, ps_short)
 
             min_val = np.min(ps_short)
