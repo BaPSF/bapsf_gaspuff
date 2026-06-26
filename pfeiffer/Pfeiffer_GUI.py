@@ -146,7 +146,7 @@ class MainWindow(QMainWindow):
         self.ax_day = self.fig.add_subplot(212)
 
         # Create the plot lines
-        self.line_short, = self.ax_short.plot([], [])
+        self.line_short, = self.ax_short.plot([], [], "-o")
         self.line_day, = self.ax_day.plot([], [])
 
         # Setup plots
