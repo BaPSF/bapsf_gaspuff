@@ -8,21 +8,25 @@ Author: Jia Han
 Ver1.0 created on: 2021-07-23
 '''
 
+import os
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"  # noqa
+
+import datetime
+import h5py
+import numpy as np
+
+from PyQt5.QtCore import QThread, pyqtSignal, QObject, Qt
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QLabel, QPushButton, QWidget
-from PyQt5.QtCore import QThread, pyqtSignal, QObject
 from PyQt5.QtGui import QFont
 
-import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+# the matplotlib backend imports must happen after import matplotlib and PyQt5
+import matplotlib as mpl
+mpl.use("qtagg")
+from matplotlib import pyplot as plt
+from matplotlib import ticker
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 
-import os
-os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
-
-import numpy as np
-import h5py
-import datetime
 
 #===============================================================================================================================================
 sensor_number = 1
