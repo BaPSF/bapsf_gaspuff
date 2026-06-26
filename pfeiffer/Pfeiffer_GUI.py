@@ -135,8 +135,7 @@ class MainWindow(QMainWindow):
         # Create a button to start the plot
         button = QPushButton("Start Plot")
         button.setFont(QFont("Arial", 24)) 
-        layout.addWidget(button)
-        button.clicked.connect(self.start_plot)
+
         self.canvas = FigureCanvas()
         self.toolbar = NavigationToolbar(self.canvas, parent=self)
 
@@ -164,6 +163,9 @@ class MainWindow(QMainWindow):
         self.ax_day.set_xlabel("Time")
         self.ax_day.set_ylabel("Pressure (Torr)")
         self.ax_day.grid(True)
+        # Connect Signals
+        button.clicked.connect(self.start_plot)
+
         #======================== END GUI setup ========================
 
         # Updating the plot by reading data from hdf5; use thread to avoid blocking the GUI
