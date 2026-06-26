@@ -91,7 +91,11 @@ class Worker(QObject):
                     last_file = ifn
                 tarr, parr, gauge_id = get_data(ifn)
 
-                if isinstance(tarr, np.ndarray) and isinstance(parr, np.ndarray) and isinstance(gauge_id, str):
+                if (
+                    isinstance(tarr, np.ndarray)
+                    and isinstance(parr, np.ndarray)
+                    and isinstance(gauge_id, str)
+                ):
                     self.data_updated.emit(tarr, parr, gauge_id)
                 else:
                     print("Skipping emit due to invalid data types.") 
@@ -193,10 +197,8 @@ class MainWindow(QMainWindow):
             self.ax_short.set_xlim(ts_short[0], ts_short[-1])
             min_val = np.min(ps_short)
             max_val = np.max(ps_short)
-            if max_val == min_val:
-                padding = 0.1 * max_val
-            else:
-                padding = 0.1 * (max_val - min_val)
+            padding = 0.1 * max_val if max_val == min_val else 0.1 * (max_val - min_val)
+
             self.ax_short.set_ylim(min_val - padding, max_val + padding)
             self.ax_short.relim()
             self.ax_short.autoscale_view(True, True, True)
