@@ -151,6 +151,8 @@ class MainWindow(QMainWindow):
 
         # Setup plots
         self._setup_short_plot()  # trailing 30 sec. plot
+        self._setup_day_plot()  # 1-day of 5 min. ave.
+
         # Build Layout
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -159,9 +161,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas, stretch=1)
 
-        self.ax_day.set_xlabel("Time")
-        self.ax_day.set_ylabel("Pressure (Torr)")
-        self.ax_day.grid(True)
         # Connect Signals
         button.clicked.connect(self.start_plot)
 
@@ -187,6 +186,12 @@ class MainWindow(QMainWindow):
         self.ax_short.set_xlabel("Time")
         self.ax_short.set_ylabel("Pressure (Torr)")
         self.ax_short.grid(True)
+
+    def _setup_day_plot(self):
+        self.ax_day.set_title(self._generate_day_title())
+        self.ax_day.set_xlabel("Time")
+        self.ax_day.set_ylabel("Pressure (Torr)")
+        self.ax_day.grid(True)
 
     def start_plot(self):
         self.thread.start()  # Start the thread, which starts worker.run
