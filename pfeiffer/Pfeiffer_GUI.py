@@ -148,11 +148,9 @@ class MainWindow(QMainWindow):
         # Create the plot lines
         self.line_short, = self.ax_short.plot([], [])
         self.line_day, = self.ax_day.plot([], [])
-        # Plot label and title
-        self.ax_short.set_title("Pressure (30 Seconds)")
-        self.ax_short.set_xlabel("Time")
-        self.ax_short.set_ylabel("Pressure (Torr)")
-        self.ax_short.grid(True)
+
+        # Setup plots
+        self._setup_short_plot()  # trailing 30 sec. plot
         # Build Layout
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -183,6 +181,12 @@ class MainWindow(QMainWindow):
     @property
     def fig(self):
         return self.canvas.figure
+
+    def _setup_short_plot(self):
+        self.ax_short.set_title("Trailing 30 sec.")
+        self.ax_short.set_xlabel("Time")
+        self.ax_short.set_ylabel("Pressure (Torr)")
+        self.ax_short.grid(True)
 
     def start_plot(self):
         self.thread.start()  # Start the thread, which starts worker.run
