@@ -83,10 +83,13 @@ class Worker(QObject):
         '''
         Find the latest file and read the last indexed data from it
         '''
+        last_file = ""
         while True:
             try:
                 ifn = get_latest_file()
-                print("Latest HDF5 file selected:", ifn)
+                if ifn != last_file:
+                    print("Latest HDF5 file selected:", ifn)
+                    last_file = ifn
                 tarr, parr, gauge_id = get_data(ifn)
 
                 if isinstance(tarr, np.ndarray) and isinstance(parr, np.ndarray) and isinstance(gauge_id, str):
