@@ -133,15 +133,13 @@ class MainWindow(QMainWindow):
         button.setFont(QFont("Arial", 24)) 
         layout.addWidget(button)
         button.clicked.connect(self.start_plot)
+        self.canvas = FigureCanvas()
+        self.toolbar = NavigationToolbar(self.canvas, parent=self)
 
         # Create a figure and a canvas for the figure
-        self.fig = Figure(figsize=(15,15))
         plt.rcParams['font.size'] = 20
         self.ax_short = self.fig.add_subplot(211)  
         self.ax_day = self.fig.add_subplot(212)
-        self.canvas = FigureCanvas(self.fig)  # Create a canvas for the figure
-        # Add the navigation toolbar for interacting with plot
-        self.toolbar = NavigationToolbar(self.canvas, self)
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas)  # Add the canvas to the layout
         # Create the plot lines
@@ -169,6 +167,10 @@ class MainWindow(QMainWindow):
 
         #======================== END INIT FUNC ==========================
     
+    @property
+    def fig(self):
+        return self.canvas.figure
+
     def start_plot(self):
         self.thread.start()  # Start the thread, which starts worker.run
 
