@@ -204,6 +204,14 @@ class MainWindow(QMainWindow):
         formatter.set_powerlimits((0, 0))
         self.ax_day.yaxis.set_major_formatter(formatter)
 
+    @staticmethod
+    def _generate_day_title(day: str | None = None):
+        title = "5 min. Ave."
+        if isinstance(day, str):
+            title = f"{title} [{day}]"
+
+        return title
+
     def start_plot(self):
         self.thread.start()  # Start the thread, which starts worker.run
 
@@ -277,7 +285,7 @@ class MainWindow(QMainWindow):
                     self.last_bin_timestamp = latest_bin
 
         date_str = start_day.strftime('%Y-%m-%d')
-        self.ax_day.set_title(f"Pressure (Full Day, 5-min Average) [{date_str}]")
+        self.ax_day.set_title(self._generate_day_title(date_str))
         self.line_day.set_data(self.avg_ts, self.avg_ps)
         self.ax_day.set_xlim(start_day, end_day)
         ticks = [start_day + datetime.timedelta(hours=2*i) for i in range(13)]
