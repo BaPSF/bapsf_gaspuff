@@ -153,6 +153,8 @@ class MainWindow(QMainWindow):
         self._setup_short_plot()  # trailing 30 sec. plot
         self._setup_day_plot()  # 1-day of 5 min. ave.
 
+        self.fig.tight_layout()
+
         # Build Layout
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -283,8 +285,12 @@ class MainWindow(QMainWindow):
                 pad = 0.1*(mx-mn) if mx!=mn else 0.1*mx
                 self.ax_day.set_ylim(mn-pad, mx+pad)
 
-        self.canvas.draw()
-        self.canvas.flush_events()
+        self.canvas.draw_idle()
+        self.fig.tight_layout()
+    
+    def resizeEvent(self, a0):
+        super().resizeEvent(a0)
+        self.fig.tight_layout()
 
 #===============================================================================================================================================
 #<o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o>
