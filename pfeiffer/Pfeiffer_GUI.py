@@ -194,6 +194,8 @@ class MainWindow(QMainWindow):
         formatter.set_powerlimits((0, 0))
         self.ax_short.yaxis.set_major_formatter(formatter)
 
+        self.ax_short.set_xlim(-30, 2)
+
     def _setup_day_plot(self):
         self.ax_day.set_title(self._generate_day_title())
         self.ax_day.set_xlabel("Time")
@@ -237,7 +239,7 @@ class MainWindow(QMainWindow):
             ts_short = [timestamps[i] for i in indices_short]
             ps_short = pressures[indices_short]
             self.line_short.set_data(ts_short, ps_short)
-            self.ax_short.set_xlim(ts_short[0], ts_short[-1])
+
             min_val = np.min(ps_short)
             max_val = np.max(ps_short)
             padding = 0.1 * max_val if max_val == min_val else 0.1 * (max_val - min_val)
