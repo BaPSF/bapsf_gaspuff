@@ -114,6 +114,7 @@ class MainWindow(QMainWindow):
         self.avg_ps = []               # Cached pressure averages
         self.last_bin_timestamp = None  # timestamp of last completed bin
         self.cache_initialized = False
+        self._gui_day = None
 
         #======================== GUI setup ========================
         central_widget = QWidget() # Create a central widget
@@ -206,7 +207,7 @@ class MainWindow(QMainWindow):
         bin_sec   = 5*60
 
         today = start_day.date()
-        if getattr(self, '_gui_day', None) != today:
+        if self._gui_day is None or self._gui_day != today:
             self._gui_day = today
             self.avg_ts.clear()
             self.avg_ps.clear()
