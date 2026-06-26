@@ -189,11 +189,20 @@ class MainWindow(QMainWindow):
         self.ax_short.set_ylabel("Pressure (Torr)")
         self.ax_short.grid(True)
 
+        # y-axis formatter
+        formatter = ticker.ScalarFormatter(useMathText=True)
+        formatter.set_powerlimits((0, 0))
+        self.ax_short.yaxis.set_major_formatter(formatter)
+
     def _setup_day_plot(self):
         self.ax_day.set_title(self._generate_day_title())
         self.ax_day.set_xlabel("Time")
         self.ax_day.set_ylabel("Pressure (Torr)")
         self.ax_day.grid(True)
+
+        formatter = ticker.ScalarFormatter(useMathText=True)
+        formatter.set_powerlimits((0, 0))
+        self.ax_day.yaxis.set_major_formatter(formatter)
 
     def start_plot(self):
         self.thread.start()  # Start the thread, which starts worker.run
