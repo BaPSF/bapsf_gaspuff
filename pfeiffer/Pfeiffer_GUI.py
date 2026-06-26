@@ -74,10 +74,6 @@ class Worker(QObject):
     '''
     data_updated = pyqtSignal(np.ndarray, np.ndarray, str)  # Signal to emit the data
 
-    def __init__(self):
-        super().__init__()
-
-
     def run(self):
         '''
         Find the latest file and read the last indexed data from it
