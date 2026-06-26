@@ -22,7 +22,6 @@ os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 import numpy as np
 import h5py
-import time
 import datetime
 
 #===============================================================================================================================================
