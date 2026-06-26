@@ -125,9 +125,13 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget) # Set the central widget
         self.setGeometry(100,100,500,500)
 
-        # Create a layout for the central widget
-        layout = QVBoxLayout(central_widget)
-        layout.addWidget(QLabel("Real time pressure reading"))
+        _title = QLabel("Real time pressure reading", parent=self)
+        _title.setFixedHeight(36)
+        font = _title.font()
+        font.setPointSize(16)
+        font.setBold(True)
+        _title.setFont(font)
+
         # Create a button to start the plot
         button = QPushButton("Start Plot")
         button.setFont(QFont("Arial", 24)) 
@@ -140,8 +144,7 @@ class MainWindow(QMainWindow):
         plt.rcParams['font.size'] = 20
         self.ax_short = self.fig.add_subplot(211)  
         self.ax_day = self.fig.add_subplot(212)
-        layout.addWidget(self.toolbar)
-        layout.addWidget(self.canvas)  # Add the canvas to the layout
+
         # Create the plot lines
         self.line_short, = self.ax_short.plot([], [])
         self.line_day, = self.ax_day.plot([], [])
@@ -150,6 +153,13 @@ class MainWindow(QMainWindow):
         self.ax_short.set_xlabel("Time")
         self.ax_short.set_ylabel("Pressure (Torr)")
         self.ax_short.grid(True)
+        # Build Layout
+        layout = QVBoxLayout(central_widget)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.addWidget(_title, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(button)
+        layout.addWidget(self.toolbar)
+        layout.addWidget(self.canvas, stretch=1)
 
         self.ax_day.set_xlabel("Time")
         self.ax_day.set_ylabel("Pressure (Torr)")
