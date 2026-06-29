@@ -8,22 +8,25 @@ Author: Jia Han
 Ver1.0 created on: 2021-07-23
 '''
 
+import os
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"  # noqa
+
+import datetime
+import h5py
+import numpy as np
+
+from PyQt5.QtCore import QThread, pyqtSignal, QObject, Qt
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QLabel, QPushButton, QWidget
-from PyQt5.QtCore import QThread, pyqtSignal, QObject
 from PyQt5.QtGui import QFont
 
-import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+# the matplotlib backend imports must happen after import matplotlib and PyQt5
+import matplotlib as mpl
+mpl.use("qtagg")
+from matplotlib import pyplot as plt
+from matplotlib import ticker
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 
-import os
-os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
-
-import numpy as np
-import h5py
-import time
-import datetime
 
 #===============================================================================================================================================
 sensor_number = 1
@@ -75,34 +78,35 @@ class Worker(QObject):
     '''
     data_updated = pyqtSignal(np.ndarray, np.ndarray, str)  # Signal to emit the data
 
-    def __init__(self):
-        super().__init__()
-
-
     def run(self):
         '''
         Find the latest file and read the last indexed data from it
         '''
+        last_file = ""
         while True:
             try:
                 ifn = get_latest_file()
-                print("Latest HDF5 file selected:", ifn)
+                if ifn != last_file:
+                    print("Latest HDF5 file selected:", ifn)
+                    last_file = ifn
                 tarr, parr, gauge_id = get_data(ifn)
 
-                if isinstance(tarr, np.ndarray) and isinstance(parr, np.ndarray) and isinstance(gauge_id, str):
+                if (
+                    isinstance(tarr, np.ndarray)
+                    and isinstance(parr, np.ndarray)
+                    and isinstance(gauge_id, str)
+                ):
                     self.data_updated.emit(tarr, parr, gauge_id)
                 else:
                     print("Skipping emit due to invalid data types.") 
                 
-                QThread.msleep(500)  # Sleep for 1 second
+                QThread.msleep(500)
             except OSError as e:
                 if "unable to lock file" in str(e):
                     print("File temporarily locked by writer. Retry in 1s...")
                 else:
                     print(f"HDF5 read error: {e}")
                 QThread.msleep(1000)
-
-
 
 
 class MainWindow(QMainWindow):
@@ -114,43 +118,54 @@ class MainWindow(QMainWindow):
         self.avg_ps = []               # Cached pressure averages
         self.last_bin_timestamp = None  # timestamp of last completed bin
         self.cache_initialized = False
+        self._gui_day = None
 
         #======================== GUI setup ========================
         central_widget = QWidget() # Create a central widget
         self.setCentralWidget(central_widget) # Set the central widget
         self.setGeometry(100,100,500,500)
 
-        # Create a layout for the central widget
-        layout = QVBoxLayout(central_widget)
-        layout.addWidget(QLabel("Real time pressure reading"))
+        _title = QLabel("Real time pressure reading", parent=self)
+        _title.setFixedHeight(36)
+        font = _title.font()
+        font.setPointSize(16)
+        font.setBold(True)
+        _title.setFont(font)
+
         # Create a button to start the plot
         button = QPushButton("Start Plot")
-        button.setFont(QFont("Arial", 24)) 
-        layout.addWidget(button)
-        button.clicked.connect(self.start_plot)
+        button.setFont(QFont("Arial", 24))
+
+        self.canvas = FigureCanvas()
+        self.toolbar = NavigationToolbar(self.canvas, parent=self)
 
         # Create a figure and a canvas for the figure
-        self.fig = Figure(figsize=(15,15))
-        plt.rcParams['font.size'] = 20
-        self.ax_short = self.fig.add_subplot(211)  
+        # self.fig = Figure(figsize=(15,15))
+        plt.rcParams['font.size'] = 16
+        self.ax_short = self.fig.add_subplot(211)
         self.ax_day = self.fig.add_subplot(212)
-        self.canvas = FigureCanvas(self.fig)  # Create a canvas for the figure
-        # Add the navigation toolbar for interacting with plot
-        self.toolbar = NavigationToolbar(self.canvas, self)
-        layout.addWidget(self.toolbar)
-        layout.addWidget(self.canvas)  # Add the canvas to the layout
-        # Create the plot lines
-        self.line_short, = self.ax_short.plot([], [])
-        self.line_day, = self.ax_day.plot([], [])
-        # Plot label and title
-        self.ax_short.set_title("Pressure (30 Seconds)")
-        self.ax_short.set_xlabel("Time")
-        self.ax_short.set_ylabel("Pressure (Torr)")
-        self.ax_short.grid(True)
 
-        self.ax_day.set_xlabel("Time")
-        self.ax_day.set_ylabel("Pressure (Torr)")
-        self.ax_day.grid(True)
+        # Create the plot lines
+        self.line_short, = self.ax_short.plot([], [], "-o")
+        self.line_day, = self.ax_day.plot([], [])
+
+        # Setup plots
+        self._setup_short_plot()  # trailing 30 sec. plot
+        self._setup_day_plot()  # 1-day of 5 min. ave.
+
+        self.fig.tight_layout()
+
+        # Build Layout
+        layout = QVBoxLayout(central_widget)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.addWidget(_title, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(button)
+        layout.addWidget(self.toolbar)
+        layout.addWidget(self.canvas, stretch=1)
+
+        # Connect Signals
+        button.clicked.connect(self.start_plot)
+
         #======================== END GUI setup ========================
 
         # Updating the plot by reading data from hdf5; use thread to avoid blocking the GUI
@@ -164,6 +179,63 @@ class MainWindow(QMainWindow):
 
         #======================== END INIT FUNC ==========================
     
+    @property
+    def fig(self):
+        return self.canvas.figure
+
+    def _setup_short_plot(self):
+        self.ax_short.set_title("Trailing 30 sec.")
+        self.ax_short.set_xlabel("Time")
+        self.ax_short.set_ylabel("Pressure (Torr)")
+        self.ax_short.grid(True)
+
+        # y-axis formatter
+        formatter = ticker.ScalarFormatter(useMathText=True)
+        formatter.set_powerlimits((0, 0))
+        self.ax_short.yaxis.set_major_formatter(formatter)
+
+        # x-axis formatter
+        formatter = ticker.FuncFormatter(self._tminus_formatter)
+        self.ax_short.xaxis.set_major_formatter(formatter)
+        # leaving this here as a template if the tick labels need to be rotated
+        # self.ax_short.tick_params("x", labelrotation=20)
+        # for label in self.ax_short.get_xticklabels():
+        #     label.set_horizontalalignment("right")
+
+        self.ax_short.set_xlim(-30, 2)
+
+    def _setup_day_plot(self):
+        self.ax_day.set_title(self._generate_day_title())
+        self.ax_day.set_xlabel("Time")
+        self.ax_day.set_ylabel("Pressure (Torr)")
+        self.ax_day.grid(True)
+
+        formatter = ticker.ScalarFormatter(useMathText=True)
+        formatter.set_powerlimits((0, 0))
+        self.ax_day.yaxis.set_major_formatter(formatter)
+
+    @staticmethod
+    def _generate_day_title(day: str | None = None):
+        title = "5 min. Ave."
+        if isinstance(day, str):
+            title = f"{title} [{day}]"
+
+        return title
+
+    @staticmethod
+    def _tminus_formatter(x, pos):
+        hours = int(abs(x) // 3600)
+        minutes = int((abs(x) % 3600) // 60)
+        seconds = int(abs(x) % 60)
+
+        if x > 0:
+            return f"T+{seconds:02d}s"
+
+        if x < 0:
+            return f"T-{seconds:02d}s"
+
+        return "T-0"
+
     def start_plot(self):
         self.thread.start()  # Start the thread, which starts worker.run
 
@@ -186,16 +258,16 @@ class MainWindow(QMainWindow):
         indices_short = [i for i, ts in enumerate(timestamps) if ts >= time_30s]
 
         if indices_short:
-            ts_short = [timestamps[i] for i in indices_short]
+            ts_short = [(timestamps[i] - now).total_seconds() for i in indices_short]
             ps_short = pressures[indices_short]
+
+            self.ax_short.set_title(f"T={now.strftime("%H:%M:%S")}")
             self.line_short.set_data(ts_short, ps_short)
-            self.ax_short.set_xlim(ts_short[0], ts_short[-1])
+
             min_val = np.min(ps_short)
             max_val = np.max(ps_short)
-            if max_val == min_val:
-                padding = 0.1 * max_val
-            else:
-                padding = 0.1 * (max_val - min_val)
+            padding = 0.1 * max_val if max_val == min_val else 0.1 * (max_val - min_val)
+
             self.ax_short.set_ylim(min_val - padding, max_val + padding)
             self.ax_short.relim()
             self.ax_short.autoscale_view(True, True, True)
@@ -206,7 +278,7 @@ class MainWindow(QMainWindow):
         bin_sec   = 5*60
 
         today = start_day.date()
-        if getattr(self, '_gui_day', None) != today:
+        if self._gui_day is None or self._gui_day != today:
             self._gui_day = today
             self.avg_ts.clear()
             self.avg_ps.clear()
@@ -239,7 +311,7 @@ class MainWindow(QMainWindow):
                     self.last_bin_timestamp = latest_bin
 
         date_str = start_day.strftime('%Y-%m-%d')
-        self.ax_day.set_title(f"Pressure (Full Day, 5-min Average) [{date_str}]")
+        self.ax_day.set_title(self._generate_day_title(date_str))
         self.line_day.set_data(self.avg_ts, self.avg_ps)
         self.ax_day.set_xlim(start_day, end_day)
         ticks = [start_day + datetime.timedelta(hours=2*i) for i in range(13)]
@@ -256,8 +328,12 @@ class MainWindow(QMainWindow):
                 pad = 0.1*(mx-mn) if mx!=mn else 0.1*mx
                 self.ax_day.set_ylim(mn-pad, mx+pad)
 
-        self.canvas.draw()
-        self.canvas.flush_events()
+        self.canvas.draw_idle()
+        self.fig.tight_layout()
+    
+    def resizeEvent(self, a0):
+        super().resizeEvent(a0)
+        self.fig.tight_layout()
 
 #===============================================================================================================================================
 #<o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o> <o>
