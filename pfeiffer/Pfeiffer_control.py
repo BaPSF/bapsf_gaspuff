@@ -107,33 +107,30 @@ def init_hdf5_file(file_name, controller):
 				grp.create_dataset("timestamp", (0,), maxshape=(None,), dtype='f')
 
 def get_pressure_reading(controller):
+	# Gauge model (TID) and gas type (GAS) are static per session and recorded
+	# at file init, so the sampling path only queries pressure (PRX).
 	try:
 		controller.connect()
 		stat_ls, pres_ls = controller.get_all_pressure_reading()
 		timestamp = time.time()
-		gauge_ls = controller.get_device_id()
-		gas_ls = controller.get_gas_type()
 		controller.disconnect()
-		return timestamp, stat_ls, pres_ls, gauge_ls, gas_ls
+		return timestamp, stat_ls, pres_ls
 	except MaxiGaugeError as e:
 		controller.disconnect()
 		time.sleep(0.5)
 		raise
 
-def save_pressure_reading(f, timestamp, pres_ls, gauge_ls, gas_ls):
+def save_pressure_reading(f, timestamp, pres_ls):
 
 	grp = f["PfeifferVacuum"]
-	
+
+	# NOTE: attributes cannot be modified while the file is in SWMR mode, so
+	# gauge/gas changes are not recorded here; attrs are fixed at file init.
 	for i, pres in enumerate(pres_ls): # save pressure reading for each sensor
 		dataset_name = str(i+1)
 		p_dataset = grp[dataset_name]
 		p_dataset.resize((p_dataset.shape[0]+1,))
 		p_dataset[-1] = pres
-
-		if (p_dataset.attrs['Model'][-1] != gauge_ls[i]) or (p_dataset.attrs['Gas'][-1] != gas_ls[i]):
-			p_dataset.attrs['Model'].append(gauge_ls[i])
-			p_dataset.attrs['Gas'].append(gas_ls[i])
-			p_dataset.attrs['Modified time'].append(timestamp)
 
 	t_dataset = grp["timestamp"] 		# save timestamp
 	t_dataset.resize((t_dataset.shape[0]+1,))
@@ -173,13 +170,31 @@ def run_h5clear(target):
 	except (FileNotFoundError, subprocess.CalledProcessError):
 		subprocess.run([H5CLEAR_FALLBACK, "-s", target], check=True)
 
+def get_hdf5_filename():
+	"""Path of today's data file."""
+	return f"{hdf5_path}\\pressure_data_{datetime.date.today()}.hdf5"
+
+def open_swmr_file(file_name):
+	"""Open the file for append and enter SWMR mode so readers can open it concurrently."""
+	f = h5py.File(file_name, 'a', libver='latest')
+	f.swmr_mode = True
+	return f
+
+def close_file(f):
+	"""Close the handle, ignoring errors; returns None so callers can reset their handle."""
+	if f is not None:
+		try:
+			f.close()
+		except Exception:
+			pass
+	return None
+
 def main():
 
 	pfController = MaxiGauge(ip_addr=ip_address)
 	count = 0
 	f = None  # ensure name exists for outer except handler before first open
-	date = datetime.date.today()
-	hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
+	hdf5_ifn = get_hdf5_filename()
 
 	log_connection_event(datetime.datetime.now(), "STARTED")
 	connection_lost = False 
@@ -211,9 +226,9 @@ def main():
 	
 			try: 
 				returns = get_pressure_reading(pfController)
-				if returns == (None, None, None, None, None): 
+				if returns == (None, None, None):
 					continue
-				timestamp, stat_ls, pres_ls, gauge_ls, gas_ls = returns 
+				timestamp, stat_ls, pres_ls = returns
 
 				if connection_lost:
 					log_connection_event(datetime.datetime.now(), "RECOVERED")
@@ -239,44 +254,28 @@ def main():
 			if count % 100 == 0:
 				print(f"Pressure reading: {pres_ls[0]} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))}")
 
-			# Lock the file before writing
-			# lockfile = f"{hdf5_ifn}_PfeifferVacuum.lock" 
-			# lock_fd = acquire_lock(lockfile)
+			# Keep the file open in SWMR mode across iterations so readers can
+			# open it concurrently; reopen only after a day change or an error.
+			if f is None:
+				f = open_swmr_file(hdf5_ifn)
 
-			# Save the data to the HDF5 file
-			f = h5py.File(hdf5_ifn, 'a', libver='latest')
-			f.swmr_mode = True
-			try:
-				fc_day = f.attrs['created'][-2] # Check if the day has changed
-				cd = get_current_day(timestamp)
-				if fc_day != cd: # if so, create a new HDF5 file
-					f.close()
-					date = datetime.date.today()
-					hdf5_ifn = f"{hdf5_path}\\pressure_data_{date}.hdf5"
-					init_hdf5_file(hdf5_ifn, pfController)
-					f = h5py.File(hdf5_ifn, 'a', libver='latest')
-					f.swmr_mode = True
-					continue
-				
-				try: #updatd by Jingxuan, catches pressure errors while reading
-					save_pressure_reading(f, timestamp, pres_ls, gauge_ls, gas_ls)
-					f.close()
-				except Exception as e:
-						print("Failed to write pressure reading:", e)
-			except OSError as e:
-					print("Write error, did not save data", e)
-					time.sleep(0.5)
-					continue
+			fc_day = f.attrs['created'][-2] # Check if the day has changed
+			cd = get_current_day(timestamp)
+			if fc_day != cd: # if so, create a new HDF5 file
+				f = close_file(f)
+				hdf5_ifn = get_hdf5_filename()
+				init_hdf5_file(hdf5_ifn, pfController)
+				continue
 
-			
-			
-			# release_lock(lock_fd)
+			save_pressure_reading(f, timestamp, pres_ls)
+			f.flush() # make the appended data visible to SWMR readers
 
 		except KeyboardInterrupt:
 			print("Keyboard interrupt detected. Exiting...")
 			break
 
-		except OSError as e: 
+		except OSError as e:
+			f = close_file(f)
 			if "SWMR" in str(e) or "already open for write" in str(e):
 				print("Detected SWMR lock. Attempting auto-recovery using h5clear...")
 				try:
@@ -294,13 +293,11 @@ def main():
 
 		except Exception as e:
 			print(f"Operation error: {e}. Reopening file...")
-			if f is not None:
-				try: 
-					f.close()
-				except:
-					pass
+			f = close_file(f)
 			time.sleep(0.5)
 			continue
+
+	close_file(f)
 
 		
 
