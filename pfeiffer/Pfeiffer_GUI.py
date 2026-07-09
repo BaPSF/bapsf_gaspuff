@@ -26,7 +26,7 @@ import time
 import datetime
 
 #===============================================================================================================================================
-sensor_number = 1
+sensor_numbers = None  # e.g. [1, 2] to show specific channels; None = auto-detect connected gauges
 n_points = 10000
 #===============================================================================================================================================
 
@@ -44,28 +44,47 @@ def get_latest_file(dir_path=r"C:\data\gauge"):
     full_path_file_list = [os.path.join(dir_path, file) for file in file_list]
     return max(full_path_file_list, key=os.path.getctime)
 
+def read_gauge_model(dataset):
+    '''
+    gauge model string from the dataset attribute written at file init
+    '''
+    gauge_id = dataset.attrs['Model'][-1]
+    if isinstance(gauge_id, (list, np.ndarray)):
+        gauge_id = gauge_id[0]
+    if isinstance(gauge_id, bytes):
+        gauge_id = gauge_id.decode()
+    return str(gauge_id)
+
 def get_data(ifn):
     '''
     read the data from the hdf5 file
+    Returns (tarr, sensors) where sensors maps sensor number -> (parr, gauge model)
     '''
     try:
         with h5py.File(ifn, 'r', swmr=True) as f:
-            parr =  f['PfeifferVacuum'][str(sensor_number)][::10]
-            tarr = f['PfeifferVacuum']['timestamp'][::10]
-            gauge_id = f['PfeifferVacuum'][str(sensor_number)].attrs['Model'][-1]
+            grp = f['PfeifferVacuum']
+            tarr = grp['timestamp'][::10]
+            if len(tarr) > n_points:
+                tarr = tarr[-n_points:]
 
-            if isinstance(gauge_id, (list, np.ndarray)):
-                gauge_id = gauge_id[0]
-            if isinstance(gauge_id, bytes):
-                gauge_id = gauge_id.decode()
-
-            if len(parr) < n_points:
-                return tarr, parr, gauge_id
-            else:
-                return tarr[-n_points:], parr[-n_points:], gauge_id
+            channels = sensor_numbers or sorted(int(k) for k in grp.keys() if k.isdigit())
+            sensors = {}
+            for ch in channels:
+                dset = grp[str(ch)]
+                gauge_id = read_gauge_model(dset)
+                # controller reports "noSen"-type model on channels without a gauge
+                if gauge_id.lower().startswith('nosen'):
+                    if sensor_numbers is not None:
+                        print(f"Channel {ch} requested but controller reports no gauge; skipping")
+                    continue
+                parr = dset[::10]
+                if len(parr) > n_points:
+                    parr = parr[-n_points:]
+                sensors[ch] = (parr, gauge_id)
+            return tarr, sensors
     except Exception as e:
         print("GUI read failed:", e)
-        return None, None, None
+        return None, None
 #===============================================================================================================================================
 
 class Worker(QObject):
@@ -73,7 +92,7 @@ class Worker(QObject):
     Worker function that emits the data to the plotting GUI
     Runs in a separate thread to avoid blocking the GUI
     '''
-    data_updated = pyqtSignal(np.ndarray, np.ndarray, str)  # Signal to emit the data
+    data_updated = pyqtSignal(np.ndarray, dict)  # Signal to emit the data
 
     def __init__(self):
         super().__init__()
@@ -87,12 +106,12 @@ class Worker(QObject):
             try:
                 ifn = get_latest_file()
                 print("Latest HDF5 file selected:", ifn)
-                tarr, parr, gauge_id = get_data(ifn)
+                tarr, sensors = get_data(ifn)
 
-                if isinstance(tarr, np.ndarray) and isinstance(parr, np.ndarray) and isinstance(gauge_id, str):
-                    self.data_updated.emit(tarr, parr, gauge_id)
+                if isinstance(tarr, np.ndarray) and sensors:
+                    self.data_updated.emit(tarr, sensors)
                 else:
-                    print("Skipping emit due to invalid data types.") 
+                    print("Skipping emit due to invalid data types.")
                 
                 QThread.msleep(500)  # Sleep for 1 second
             except OSError as e:
@@ -110,10 +129,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__() # Call the parent class constructor
 
-        self.avg_ts = []               # Cached 5-min bin start times
-        self.avg_ps = []               # Cached pressure averages
-        self.last_bin_timestamp = None  # timestamp of last completed bin
-        self.cache_initialized = False
+        self.day_caches = {}  # per-sensor 5-min average caches, keyed by sensor number
+        self._gui_day = None  # date the caches cover; cleared on day rollover
 
         #======================== GUI setup ========================
         central_widget = QWidget() # Create a central widget
@@ -139,17 +156,19 @@ class MainWindow(QMainWindow):
         self.toolbar = NavigationToolbar(self.canvas, self)
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas)  # Add the canvas to the layout
-        # Create the plot lines
-        self.line_short, = self.ax_short.plot([], [])
-        self.line_day, = self.ax_day.plot([], [])
+        # Plot lines are created per sensor when its data first arrives
+        self.lines_short = {}
+        self.lines_day = {}
         # Plot label and title
         self.ax_short.set_title("Pressure (30 Seconds)")
         self.ax_short.set_xlabel("Time")
         self.ax_short.set_ylabel("Pressure (Torr)")
+        self.ax_short.set_yscale('log')  # gauges can sit decades apart in pressure
         self.ax_short.grid(True)
 
         self.ax_day.set_xlabel("Time")
         self.ax_day.set_ylabel("Pressure (Torr)")
+        self.ax_day.set_yscale('log')
         self.ax_day.grid(True)
         #======================== END GUI setup ========================
 
@@ -167,94 +186,108 @@ class MainWindow(QMainWindow):
     def start_plot(self):
         self.thread.start()  # Start the thread, which starts worker.run
 
-    def update_plot(self, tarr, parr, gauge_id): # Update the plot with new data
-        if len(tarr) == 0 or len(parr) == 0: # Update: prevent crashes because of conflicts mid-write
-            return  
+    def _get_lines(self, ch, gauge_id):
+        '''
+        Return (short, day) plot lines for a sensor, creating them with a legend entry on first use
+        '''
+        if ch not in self.lines_short:
+            label = f"CH{ch}: {gauge_id}"
+            self.lines_short[ch], = self.ax_short.plot([], [], label=label)
+            self.lines_day[ch], = self.ax_day.plot([], [], label=label)
+            self.ax_short.legend(loc='upper left', fontsize=12)
+            self.ax_day.legend(loc='upper left', fontsize=12)
+        return self.lines_short[ch], self.lines_day[ch]
 
-        if len(tarr) != len(parr):
-            min_len = min(len(tarr), len(parr))
-            tarr = tarr[:min_len]
-            parr = parr[:min_len]
+    def _update_day_cache(self, ch, ts_unix, pressures, start_day, end_day, bin_sec):
+        '''
+        Maintain the 5-min average cache for one sensor; ts_unix/pressures cover today only
+        '''
+        cache = self.day_caches.setdefault(ch, {'ts': [], 'ps': [], 'last_bin': None, 'init': False})
+        if len(ts_unix) == 0:
+            return cache
 
-        # Convert the timestamp to datetime objects
-        timestamps = [datetime.datetime.fromtimestamp(float(ts)) for ts in tarr]
-        pressures = np.asarray(parr, dtype=float)
-        now = timestamps[-1]
+        if not cache['init']:
+            edges = np.arange(start_day.timestamp(), end_day.timestamp(), bin_sec)
+            bins = np.digitize(ts_unix, edges)
+            for b in range(1, len(edges)):
+                vals = pressures[bins == b]
+                if len(vals):
+                    cache['ts'].append(datetime.datetime.fromtimestamp(edges[b-1]))
+                    cache['ps'].append(np.mean(vals))
+                    cache['last_bin'] = edges[b-1]
+            cache['init'] = True
+        else:
+            latest_bin = (ts_unix[-1] // bin_sec) * bin_sec
+            if cache['last_bin'] is None or latest_bin > cache['last_bin']:
+                mask = (ts_unix >= latest_bin) & (ts_unix < latest_bin + bin_sec)
+                vals = pressures[mask]
+                if len(vals):
+                    cache['ts'].append(datetime.datetime.fromtimestamp(latest_bin))
+                    cache['ps'].append(np.mean(vals))
+                    cache['last_bin'] = latest_bin
+        return cache
 
-        # ==================== Plot 1: 30 seconds ====================
-        time_30s = now - datetime.timedelta(seconds=30)
-        indices_short = [i for i, ts in enumerate(timestamps) if ts >= time_30s]
+    def _set_log_ylim(self, ax, val_arrays):
+        '''
+        Shared log-scale y-limits across all sensors (nonpositive readings excluded)
+        '''
+        vals = [np.asarray(v) for v in val_arrays if len(v)]
+        if not vals:
+            return
+        allv = np.concatenate(vals)
+        allv = allv[allv > 0]
+        if len(allv):
+            ax.set_ylim(allv.min() / 1.5, allv.max() * 1.5)
 
-        if indices_short:
-            ts_short = [timestamps[i] for i in indices_short]
-            ps_short = pressures[indices_short]
-            self.line_short.set_data(ts_short, ps_short)
-            self.ax_short.set_xlim(ts_short[0], ts_short[-1])
-            min_val = np.min(ps_short)
-            max_val = np.max(ps_short)
-            if max_val == min_val:
-                padding = 0.1 * max_val
-            else:
-                padding = 0.1 * (max_val - min_val)
-            self.ax_short.set_ylim(min_val - padding, max_val + padding)
-            self.ax_short.relim()
-            self.ax_short.autoscale_view(True, True, True)
+    def update_plot(self, tarr, sensors): # Update the plot with new data
+        if len(tarr) == 0 or not sensors: # prevent crashes because of conflicts mid-write
+            return
 
-        # ==================== Plot 2: Full day, 5-minute average ====================
+        tarr = np.asarray(tarr, dtype=float)
+        now = datetime.datetime.fromtimestamp(tarr[-1])
+
         start_day = datetime.datetime(now.year, now.month, now.day)
         end_day   = start_day + datetime.timedelta(days=1)
         bin_sec   = 5*60
 
-        today = start_day.date()
-        if getattr(self, '_gui_day', None) != today:
-            self._gui_day = today
-            self.avg_ts.clear()
-            self.avg_ps.clear()
-            self.last_bin_timestamp = None
-            self.cache_initialized = False
+        # Reset per-sensor caches and redo the day-axis decoration when the day rolls over
+        if self._gui_day != start_day.date():
+            self._gui_day = start_day.date()
+            self.day_caches.clear()
+            date_str = start_day.strftime('%Y-%m-%d')
+            self.ax_day.set_title(f"Pressure (Full Day, 5-min Average) [{date_str}]")
+            self.ax_day.set_xlim(start_day, end_day)
+            ticks = [start_day + datetime.timedelta(hours=2*i) for i in range(13)]
+            self.ax_day.set_xticks(ticks)
+            labels = [t.strftime('%H:%M') for t in ticks]
+            self.ax_day.set_xticklabels(labels, rotation=45, ha='right')
 
-        ts_day  = [ts for ts in timestamps if ts >= start_day]
-        ps_day  = pressures[-len(ts_day):]  # same indexing
-        ts_unix = np.array([ts.timestamp() for ts in ts_day])
-        edges   = np.arange(start_day.timestamp(), end_day.timestamp(), bin_sec)
-        bins    = np.digitize(ts_unix, edges)
+        time_30s = now - datetime.timedelta(seconds=30)
 
-        if not self.cache_initialized:
-            for b in range(1, len(edges)):
-                vals = [ps_day[i] for i in range(len(bins)) if bins[i] == b]
-                if vals:
-                    self.avg_ts.append(datetime.datetime.fromtimestamp(edges[b-1]))
-                    self.avg_ps.append(np.mean(vals))
-                    self.last_bin_timestamp = edges[b-1]
-            self.cache_initialized = True
-        else:
-            latest_bin = (ts_unix[-1] // bin_sec) * bin_sec
-            if self.last_bin_timestamp is None or latest_bin > self.last_bin_timestamp:
-                start_b = datetime.datetime.fromtimestamp(latest_bin)
-                end_b   = start_b + datetime.timedelta(seconds=bin_sec)
-                vals = [p for (p, ts) in zip(ps_day, ts_day) if start_b <= ts < end_b]
-                if vals:
-                    self.avg_ts.append(start_b)
-                    self.avg_ps.append(np.mean(vals))
-                    self.last_bin_timestamp = latest_bin
+        short_vals = []
+        for ch in sorted(sensors):
+            parr, gauge_id = sensors[ch]
+            pressures = np.asarray(parr, dtype=float)
+            n = min(len(tarr), len(pressures)) # sensor datasets may lead timestamp mid-write
+            ts_unix = tarr[:n]
+            pressures = pressures[:n]
+            line_short, line_day = self._get_lines(ch, gauge_id)
 
-        date_str = start_day.strftime('%Y-%m-%d')
-        self.ax_day.set_title(f"Pressure (Full Day, 5-min Average) [{date_str}]")
-        self.line_day.set_data(self.avg_ts, self.avg_ps)
-        self.ax_day.set_xlim(start_day, end_day)
-        ticks = [start_day + datetime.timedelta(hours=2*i) for i in range(13)]
-        self.ax_day.set_xticks(ticks)
-        labels = [t.strftime('%H:%M') for t in ticks]
-        self.ax_day.set_xticklabels(labels, rotation=45, ha='right')
+            # ==================== Plot 1: 30 seconds ====================
+            i0 = np.searchsorted(ts_unix, time_30s.timestamp())
+            if i0 < n:
+                xs = [datetime.datetime.fromtimestamp(t) for t in ts_unix[i0:]]
+                line_short.set_data(xs, pressures[i0:])
+                short_vals.append(pressures[i0:])
 
-        if self.avg_ts:
-            ts_arr = np.array(self.avg_ts)
-            ps_arr = np.array(self.avg_ps)
-            mask   = ts_arr >= start_day
-            if mask.any():
-                mn, mx = ps_arr[mask].min(), ps_arr[mask].max()
-                pad = 0.1*(mx-mn) if mx!=mn else 0.1*mx
-                self.ax_day.set_ylim(mn-pad, mx+pad)
+            # ==================== Plot 2: Full day, 5-minute average ====================
+            d0 = np.searchsorted(ts_unix, start_day.timestamp())
+            cache = self._update_day_cache(ch, ts_unix[d0:], pressures[d0:], start_day, end_day, bin_sec)
+            line_day.set_data(cache['ts'], cache['ps'])
+
+        self.ax_short.set_xlim(time_30s, now)
+        self._set_log_ylim(self.ax_short, short_vals)
+        self._set_log_ylim(self.ax_day, [c['ps'] for c in self.day_caches.values()])
 
         self.canvas.draw()
         self.canvas.flush_events()
