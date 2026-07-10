@@ -224,8 +224,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _tminus_formatter(x, pos):
-        hours = int(abs(x) // 3600)
-        minutes = int((abs(x) % 3600) // 60)
+        # Leaving in place as reference if we want trailing plot
+        # to go longer
+        #
+        # hours = int(abs(x) // 3600)
+        # minutes = int((abs(x) % 3600) // 60)
         seconds = int(abs(x) % 60)
 
         if x > 0:
