@@ -261,7 +261,7 @@ class MainWindow(QMainWindow):
             ts_short = [(timestamps[i] - now).total_seconds() for i in indices_short]
             ps_short = pressures[indices_short]
 
-            self.ax_short.set_title(f"T={now.strftime("%H:%M:%S")}")
+            self.ax_short.set_title(f"T={now.strftime('%H:%M:%S')}")
             self.line_short.set_data(ts_short, ps_short)
 
             min_val = np.min(ps_short)
