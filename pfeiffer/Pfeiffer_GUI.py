@@ -224,8 +224,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _tminus_formatter(x, pos):
-        hours = int(abs(x) // 3600)
-        minutes = int((abs(x) % 3600) // 60)
+        # Leaving in place as reference if we want trailing plot
+        # to go longer
+        #
+        # hours = int(abs(x) // 3600)
+        # minutes = int((abs(x) % 3600) // 60)
         seconds = int(abs(x) % 60)
 
         if x > 0:
@@ -261,7 +264,7 @@ class MainWindow(QMainWindow):
             ts_short = [(timestamps[i] - now).total_seconds() for i in indices_short]
             ps_short = pressures[indices_short]
 
-            self.ax_short.set_title(f"T={now.strftime("%H:%M:%S")}")
+            self.ax_short.set_title(f"T={now.strftime('%H:%M:%S')}")
             self.line_short.set_data(ts_short, ps_short)
 
             min_val = np.min(ps_short)
@@ -330,7 +333,7 @@ class MainWindow(QMainWindow):
 
         self.canvas.draw_idle()
         self.fig.tight_layout()
-    
+
     def resizeEvent(self, a0):
         super().resizeEvent(a0)
         self.fig.tight_layout()
