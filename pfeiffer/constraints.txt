@@ -1,0 +1,7 @@
+# Exact versions of the EPICS stack the pressure IOC is tested with: the pins of bapsf_epics_core's constraints.txt.
+# Install with: pip install "bapsf-epics-core[ioc,clients] @ git+https://github.com/BaPSF/bapsf_epics_core.git@<tag>" -c constraints.txt
+softioc==4.7.2
+epicscorelibs==7.0.10.99.0.2
+pvxslibs==1.5.3
+p4p==4.3.0
+pyepics==3.5.10
