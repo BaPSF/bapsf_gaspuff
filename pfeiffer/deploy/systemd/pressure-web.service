@@ -1,0 +1,80 @@
+# The pressure page (pressure_web.py) as a system unit, beside the pressure IOC and the store: it monitors the IOC's
+# PVA group <prefix>:<source>:SAMPLE, reads the store's day files in /var/lib/pressure, and serves the page on
+# 127.0.0.1:8081 (the code's default). The lab opens it through nginx (deploy/nginx/) at
+# http://<lab address>/diagnostic/pressure/. Its own process: the IOC and the store never wait on it.
+# Install as root, once the IOC and the store run (the diag-ioc account, /opt/bapsf_gaspuff and its venv,
+# /etc/diag-ioc/pressure.toml):
+#   .venv/bin/pip install fastapi uvicorn websockets -c pfeiffer/constraints.txt
+#   cp pfeiffer/deploy/systemd/pressure-web.service /etc/systemd/system/
+#   # optional: /etc/diag-ioc/pressure-web.env for overrides (e.g. PRESSURE_WEB_PORT, which nginx's proxy_pass must match)
+#   systemctl daemon-reload && systemctl enable --now pressure-web
+# Log: journalctl -u pressure-web. It reads the gauges from the IOC's config at start: restart it after that file changes.
+# Not yet run on a machine: at the first start, check the log for "connected" and open the page through nginx.
+[Unit]
+Description=Pressure page (pressure_web, PVA client of the pressure IOC, reader of the store's files)
+# After= only: the page waits for the group itself (p4p reconnects). No Wants=, Requires=, BindsTo= or PartOf=, so it
+# never starts or stops the IOC or the store.
+After=network-online.target diag-ioc@pressure.service pressure-store.service
+
+[Service]
+Type=simple
+# diag-ioc, the IOC's account: the page has no login and writes nothing.
+User=diag-ioc
+Group=diag-ioc
+WorkingDirectory=/opt/bapsf_gaspuff
+Environment=PYTHONPATH=/opt/bapsf_gaspuff/pfeiffer
+Environment=PYTHONUNBUFFERED=1
+# The IOC runs on this machine. Loopback only, so the page finds each PV once.
+Environment=EPICS_PVA_ADDR_LIST=127.0.0.1
+Environment=EPICS_PVA_AUTO_ADDR_LIST=NO
+# numpy's OpenBLAS would start one thread per core at import; the page needs none, and TasksMax counts them.
+Environment=OPENBLAS_NUM_THREADS=1
+EnvironmentFile=-/etc/diag-ioc/pressure-web.env
+ExecStart=/opt/bapsf_gaspuff/.venv/bin/python /opt/bapsf_gaspuff/pfeiffer/pressure_web.py --config /etc/diag-ioc/pressure.toml --dir /var/lib/pressure
+# SIGTERM: uvicorn closes the sockets (up to STOP_TIMEOUT_S in pressure_web.py), then the monitors.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+# Loopback only: nginx on this machine is the way in, and the IOC is on this machine. Nothing else, least of all the
+# instrument network.
+IPAddressDeny=any
+IPAddressAllow=localhost
+# Sized for MAX_CONNECTIONS (80) in pressure_web.py. A 30-day history query takes a moment of one core.
+CPUQuota=25%
+MemoryMax=512M
+# Threads: the event loop, p4p's workers and PVXS's own, the history reader, and anyio's pool (up to 40) for static files.
+TasksMax=128
+LimitNOFILE=256
+NoNewPrivileges=yes
+# Read-only system, /var/lib/pressure included: SQLite reads the day file being written without writing beside it.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+# AF_NETLINK: PVXS lists the host's network interfaces through it.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# A call outside the filter fails with EPERM instead of killing the process: after a start, check that the page works,
+# not only the journal.
+SystemCallErrorNumber=EPERM
+# What the page never needs: the IOC's state (and the gas selection file's directory).
+InaccessiblePaths=-/var/lib/diag-ioc
+
+[Install]
+WantedBy=multi-user.target

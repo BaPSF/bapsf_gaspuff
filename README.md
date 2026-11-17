@@ -72,7 +72,7 @@ The sensor to plot (`sensor_number`) and the rolling window length (`n_points`) 
 
 ### EPICS pressure monitor (in progress)
 
-A Linux pressure monitor (EPICS IOC, SQLite store, live web page) is being built next to the logger above, which stays unchanged as the reference. The page is not written yet. So far:
+A Linux pressure monitor (EPICS IOC, SQLite store, live web page) is being built next to the logger above, which stays unchanged as the reference. Nothing of it has run against the real controller yet. So far:
 
 | File | Purpose |
 |------|---------|
@@ -83,7 +83,9 @@ A Linux pressure monitor (EPICS IOC, SQLite store, live web page) is being built
 | [pfeiffer/pressure_gas.py](pfeiffer/pressure_gas.py) | The gas selection: the command that selects the gas in the machine, and the file it writes. |
 | [pfeiffer/pressure_store.py](pfeiffer/pressure_store.py) | The store: its own process, which saves every reading the IOC publishes in one SQLite file per day. |
 | [pfeiffer/pressure_db.py](pfeiffer/pressure_db.py) | The layout of the day files and the functions that read them (`read`, `read_minutes`, `stats`, `history`, `events`). Needs only `numpy`. |
-| [pfeiffer/deploy/systemd/pressure-store.service](pfeiffer/deploy/systemd/pressure-store.service) | Example systemd unit for the store. |
+| [pfeiffer/pressure_web.py](pfeiffer/pressure_web.py) | The page: its own process, which shows the readings live and the store's files as history, read-only. Its files are in [pfeiffer/pressure_web_static/](pfeiffer/pressure_web_static/). |
+| [pfeiffer/deploy/systemd/](pfeiffer/deploy/systemd/) | Example systemd units: `diag-ioc@.service` (the IOC), `pressure-store.service`, `pressure-web.service`. Each lists its install steps. |
+| [pfeiffer/deploy/nginx/](pfeiffer/deploy/nginx/) | Example nginx site, the one way in to the page from the lab network, and its systemd drop-in. |
 | [pfeiffer/deploy/diag-ioc/](pfeiffer/deploy/diag-ioc/) | `pressure.toml.example`, the IOC's config with every key explained, and `readonly.acf`, which makes every PV read-only. |
 | [pfeiffer/tests/](pfeiffer/tests/) | Tests against the fake controller: `python -m unittest discover -s pfeiffer/tests`. |
 
@@ -173,6 +175,24 @@ s = pressure_db.stats("<store directory>", start, end, "G1")   # count, min, mea
 - The same data with the `sqlite3` command: `SELECT time, p_raw_g1, status_g1 FROM sample_tpg1 WHERE time >= <epoch s>`. The docstring of [pfeiffer/pressure_db.py](pfeiffer/pressure_db.py) lists every table.
 - `BASE` and its limits use `P_RAW`, so a limit does not move when the selection changes.
 
+#### The page
+
+`pressure_web.py` serves the page at `http://127.0.0.1:8081/`; on the machine, nginx passes it on at `http://<lab address>/diagnostic/pressure/`.
+
+```bash
+.venv/bin/pip install fastapi uvicorn websockets -c pfeiffer/constraints.txt
+PYTHONPATH=pfeiffer .venv/bin/python pfeiffer/pressure_web.py --config <config directory>/pressure.toml --dir <store directory>
+```
+
+- One tile per gauge: the pressure corrected for the gas, the gauge's own reading and its multiplier, its status and type, and its base pressure against its limits. A tile and a bar at the top turn yellow above the warning limit and red above the alarm limit.
+- The gas row shows the selected gas, since when and by whom. It only shows the selection; the gas is selected on the IOC's machine (above).
+- The live chart holds every reading of the last 5 minutes. The history chart reads the store's files (`pressure_db.history()`) over 1 hour to 30 days, corrected for the gas or as the gauges read; the base-pressure limits are drawn on the gauge reading, since that is what they are compared with.
+- Bars say when the controller does not answer, when the IOC cannot be reached, and when readings stop.
+- It takes the gauges, limits and multipliers from the IOC's config (`--config`): restart it after that file changes. It never shows the controller's address.
+- It writes nothing: no PV, no file. It monitors the PVA group and a few single PVs with `p4p`, and opens the day files read-only.
+- Limits, as on the interferometer page: 20 viewers in all, 3 pages per address, history requests rate-limited per address. A page that loses its connection says so and is reloaded by hand.
+- `PRESSURE_WEB_HOST` and `PRESSURE_WEB_PORT` change where it listens; nginx's `proxy_pass` must match.
+
 #### Tests
 
 ```bash
@@ -181,6 +201,7 @@ python -m unittest discover -s pfeiffer/tests
 
 - The driver, options and gas selection tests need nothing but Python 3.11 or later.
 - The IOC module tests need `bapsf_epics_core`. Those that start a real IOC also need `softioc` and `pyepics`. They are skipped where a package is missing.
+- The page tests also need `fastapi`, `uvicorn` and `websockets`, and `node` for the page's connection script. They hand the page made-up PV updates, or those the IOC module publishes while reading the fake controller.
 - Nothing here has been run against the real controller.
 
 ---
