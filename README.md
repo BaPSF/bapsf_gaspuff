@@ -83,6 +83,7 @@ A Linux pressure monitor (EPICS IOC, SQLite store, live web page) is being built
 | [pfeiffer/pressure_gas.py](pfeiffer/pressure_gas.py) | The gas selection: the command that selects the gas in the machine, and the file it writes. |
 | [pfeiffer/pressure_store.py](pfeiffer/pressure_store.py) | The store: its own process, which saves every reading the IOC publishes in one SQLite file per day. |
 | [pfeiffer/pressure_db.py](pfeiffer/pressure_db.py) | The layout of the day files and the functions that read them (`read`, `read_minutes`, `stats`, `history`, `events`). Needs only `numpy`. |
+| [pfeiffer/pressure_import.py](pfeiffer/pressure_import.py) | Copies the old logger's HDF5 files into the store's day files, once, so all pressure data is in one place. Needs `numpy` and `h5py`. |
 | [pfeiffer/deploy/systemd/pressure-store.service](pfeiffer/deploy/systemd/pressure-store.service) | Example systemd unit for the store. |
 | [pfeiffer/deploy/diag-ioc/](pfeiffer/deploy/diag-ioc/) | `pressure.toml.example`, the IOC's config with every key explained, and `readonly.acf`, which makes every PV read-only. |
 | [pfeiffer/tests/](pfeiffer/tests/) | Tests against the fake controller: `python -m unittest discover -s pfeiffer/tests`. |
@@ -172,6 +173,21 @@ s = pressure_db.stats("<store directory>", start, end, "G1")   # count, min, mea
 - Pressures are Torr, corrected for the gas (`P_RAW` x multiplier). `corrected=False` returns the gauge's own reading.
 - The same data with the `sqlite3` command: `SELECT time, p_raw_g1, status_g1 FROM sample_tpg1 WHERE time >= <epoch s>`. The docstring of [pfeiffer/pressure_db.py](pfeiffer/pressure_db.py) lists every table.
 - `BASE` and its limits use `P_RAW`, so a limit does not move when the selection changes.
+
+#### Importing the old HDF5 files
+
+`pressure_import.py` copies the `pressure_data_YYYY-MM-DD.hdf5` files of `Pfeiffer_control.py` into the day files, so the store's directory holds all the pressure data. It only reads the old files. It needs `h5py` (`.venv/bin/pip install h5py`).
+
+```bash
+PYTHONPATH=pfeiffer .venv/bin/python pfeiffer/pressure_import.py --config <config directory>/pressure.toml --dir <store directory> --check <old files or directory>
+PYTHONPATH=pfeiffer .venv/bin/python pfeiffer/pressure_import.py --config <config directory>/pressure.toml --dir <store directory> <old files or directory>
+```
+
+- `--check` reads every file and reports what would be imported, without writing. The import then prints the same report.
+- Each channel goes in under the gauge key the config gives that channel, so check that the config's channels match where the gauges were when the old files were written. A channel the config does not list, or that held no gauge, is left out and named in the report.
+- The old files have no status, no gas selection and no unit check. Imported readings have status NULL (`read()` returns -1) and a setting row with species `not recorded` and multiplier 1, so their corrected pressure is the gauge's own reading. The controller's own gas setting of each channel goes into the `gauge` table as `device_gas`.
+- A file whose gauge datasets differ in length from its timestamp dataset is not imported: a write failed part way, and the readings after it may not line up with their times. `--trim` imports such a file up to the length of the timestamp dataset when every gauge dataset is at least that long. That is what the old logger leaves when a gauge or gas setting changed.
+- Each day file written gets an `import` event naming the old file. Running the import again skips the days that already have it. Today's day file is not written, because the store may be writing it.
 
 #### Tests
 
