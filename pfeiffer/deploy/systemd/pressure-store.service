@@ -1,0 +1,44 @@
+# The pressure store (pressure_store.py) as a system unit, beside the pressure IOC: it monitors the IOC's PVA group
+# <prefix>:<source>:SAMPLE and writes the day files /var/lib/pressure/pressure_YYYYMMDD.sqlite. Its own process: the IOC
+# never waits on it.
+# Install as root, once the IOC runs (the diag-ioc account, the checkout in /opt/bapsf_gaspuff with its venv, which holds
+# bapsf_epics_core with the clients extra for p4p, and /etc/diag-ioc/pressure.toml):
+#   cp pfeiffer/deploy/systemd/pressure-store.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now pressure-store
+# Log: journalctl -u pressure-store. The store reads the gauges and the prefix from the IOC's config file at start, so
+# restart it after that file changes: systemctl restart pressure-store.
+# systemd creates /var/lib/pressure 0755 and the files are 0644: every local account can read them, only diag-ioc writes.
+# /var/lib must be a local disk, never a network share.
+# Not yet run on a machine: at the first start, check the log for "connected" and that the day file grows.
+[Unit]
+Description=Pressure store (pressure_store, PVA client of the pressure IOC)
+After=network-online.target diag-ioc@pressure.service
+Wants=network-online.target
+# After= only: the store waits for the group itself (p4p reconnects). No Wants=, Requires=, BindsTo= or PartOf= on the
+# IOC, so the store never starts or stops it, and an IOC stop or crash never stops the store.
+
+[Service]
+Type=simple
+# diag-ioc, the IOC's account. The store needs no key and no instrument.
+User=diag-ioc
+Group=diag-ioc
+WorkingDirectory=/opt/bapsf_gaspuff
+Environment=PYTHONPATH=/opt/bapsf_gaspuff/pfeiffer
+Environment=PYTHONUNBUFFERED=1
+# The IOC runs on this machine. Loopback only, so the store finds each PV once, and reaches nothing else: neither the
+# gauge controller nor any other instrument.
+Environment=EPICS_PVA_ADDR_LIST=127.0.0.1
+Environment=EPICS_PVA_AUTO_ADDR_LIST=NO
+IPAddressDeny=any
+IPAddressAllow=localhost
+# /var/lib/pressure, the store's alone.
+StateDirectory=pressure
+ExecStart=/opt/bapsf_gaspuff/.venv/bin/python /opt/bapsf_gaspuff/pfeiffer/pressure_store.py --config /etc/diag-ioc/pressure.toml --dir /var/lib/pressure
+# SIGTERM: stops monitoring, commits what is queued (up to pressure_store.STOP_TIMEOUT_S), closes the day file and exits.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
