@@ -132,8 +132,17 @@ class ReconnectDelay:
 
 def parse_address(text):
 	""" "host" or "host:port" -> (host, port); the port defaults to DEFAULT_PORT."""
-	host, sep, port = text.strip().partition(":")
-	if not host or (sep and not (port.isdigit() and 0 < int(port) < 65536)):
+	text = text.strip()
+	if text.startswith("["):
+		host, bracket, rest = text[1:].partition("]")
+		sep, port = (":", rest[1:]) if rest.startswith(":") else ("", rest)
+		valid_host = bool(bracket and host and (not rest or rest.startswith(":")))
+	else:
+		host, sep, port = text.rpartition(":")
+		if not sep:
+			host, port = port, ""
+		valid_host = bool(host and ":" not in host)
+	if not valid_host or (sep and not (port.isdigit() and 0 < int(port) < 65536)):
 		raise ValueError(f"controller address {text!r} is not host or host:port")
 	return host, int(port) if sep else DEFAULT_PORT
 
@@ -235,11 +244,10 @@ class Tpg366:
 		"""Clear the controller's input buffer and discard what it was still sending (a continuous output left
 		running stops at the first byte it receives)."""
 		self._send(_ETX)
-		sock = self._sock
 		end = time.monotonic() + _SETTLE_MAX_S
 		try:
-			while sock is not None and time.monotonic() < end:
-				sock.settimeout(_SETTLE_QUIET_S)
+			while (sock := self._sock) is not None and (remaining := end - time.monotonic()) > 0:
+				sock.settimeout(min(_SETTLE_QUIET_S, remaining))
 				if not sock.recv(4096):
 					raise self._fail("connection closed by the controller")
 		except TimeoutError:

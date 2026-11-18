@@ -208,7 +208,9 @@ class HelpersTest(unittest.TestCase):
 	def test_parse_address(self):
 		self.assertEqual(tpg366.parse_address("controller.example"), ("controller.example", 8000))
 		self.assertEqual(tpg366.parse_address(" controller.example:8001 "), ("controller.example", 8001))
-		for bad in ("", ":8000", "controller.example:", "controller.example:x", "controller.example:0"):
+		self.assertEqual(tpg366.parse_address("[::1]"), ("::1", 8000))
+		self.assertEqual(tpg366.parse_address("[::1]:8001"), ("::1", 8001))
+		for bad in ("", ":8000", "controller.example:", "controller.example:x", "controller.example:0", "a:b:8000", "[::1"):
 			with self.subTest(address=bad), self.assertRaises(ValueError):
 				tpg366.parse_address(bad)
 
