@@ -136,8 +136,13 @@ class GasSelectionTests(unittest.TestCase):
 
 	def test_write_then_read(self):
 		before = time.time()
-		self.assertEqual(pressure_gas.write_selection(self.gas, " argon "), "Argon")
-		self.assertEqual(self.file.read_text(), "Argon\n")
+		old_umask = os.umask(0o077)
+		try:
+			self.assertEqual(pressure_gas.write_selection(self.gas, " argon "), "Argon")
+		finally:
+			os.umask(old_umask)
+		self.assertEqual(self.file.stat().st_mode & 0o444, 0o444)
+		self.assertEqual(self.file.read_text(encoding="utf-8"), "Argon\n")
 		self.assertEqual(sorted(self.file.parent.iterdir()), sorted([self.file, self.config]))  # no temporary file left behind
 		selection = pressure_gas.read_selection(self.gas)
 		self.assertEqual(selection.species, "Argon")
@@ -161,12 +166,12 @@ class GasSelectionTests(unittest.TestCase):
 		self.assertIn("gas selection: Helium (the default; no gas has been selected)", out)
 		self.assertIn("choices: Helium, Hydrogen, Argon, Nitrogen", out)
 		self.assertEqual(self.run_command("hydrogen")[:2], (0, "gas selection: Hydrogen\n"))
-		self.assertEqual(self.file.read_text(), "Hydrogen\n")
+		self.assertEqual(self.file.read_text(encoding="utf-8"), "Hydrogen\n")
 		self.assertRegex(self.run_command()[1], r"gas selection: Hydrogen \(since \d{4}-\d\d-\d\d \d\d:\d\d:\d\d, by .+\)")
 		code, out, err = self.run_command("neon")
 		self.assertEqual((code, out), (1, ""))
 		self.assertIn("'neon' is not one of", err)
-		self.assertEqual(self.file.read_text(), "Hydrogen\n")
+		self.assertEqual(self.file.read_text(encoding="utf-8"), "Hydrogen\n")
 
 
 if __name__ == "__main__":
