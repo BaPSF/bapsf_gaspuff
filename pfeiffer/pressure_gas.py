@@ -67,6 +67,7 @@ def write_selection(gas, text):
 			f.write(species + "\n")
 			f.flush()
 			os.fsync(f.fileno())
+		os.chmod(tmp, 0o644)  # readable by the diag-ioc account even when the caller has a strict umask
 		os.replace(tmp, gas.selection_file)
 	except OSError:
 		try:

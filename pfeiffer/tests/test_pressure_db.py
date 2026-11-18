@@ -166,9 +166,15 @@ class DayFileTests(unittest.TestCase):
 		later = pressure_db.history(self.dir, "TPG1", T0 + 900, T0 + 900 + 86400, 2000)
 		self.assertEqual(later["gas"], [[T0 + 900, "Helium"], [T0 + 1800, "Argon"]])  # in force at the start, then the change
 		self.assertEqual(len(later["t"]), 10)
+		self.assertEqual(later["width"], 60.0)
+		# An 8-hour range asked for 1200 buckets uses 1-minute buckets, so consecutive minutes have no false gaps between them.
+		eight_hours = pressure_db.history(self.dir, "TPG1", T0, T0 + 8 * 3600, 1200)
+		self.assertEqual(eight_hours["width"], 60.0)
+		np.testing.assert_array_equal(np.diff(eight_hours["t"][:10]), 60.0)
 		for start, end, buckets in ((T0, T0, 10), (T0 + 10, T0, 10), (T0, T0 + 10, 0), (T0 + 7200, T0 + 9000, 10)):
 			nothing = pressure_db.history(self.dir, "TPG1", start, end, buckets)
 			self.assertEqual((len(nothing["t"]), [len(g["mean"]) for g in nothing["gauges"].values()]), (0, [0] * len(nothing["gauges"])))
+		self.assertEqual(pressure_db.history(self.dir, "TPG1", T0, T0, 10)["width"], 0.0)
 
 	def test_gauge_and_source_rows_are_added_only_on_a_change(self):
 		file = self.day()
@@ -184,8 +190,15 @@ class DayFileTests(unittest.TestCase):
 		self.assertEqual(changed, {"model": ("PKR", "IKR"), "base_alarm_torr": (None, 2e-5)})
 		self.assertEqual(file.latest("gauge", "G1")["multipliers"], '{"Helium": 5.9, "Nitrogen": 1.0}')
 		self.assertIsNone(file.latest("gauge", "G2"))
+		# Historical rows added later with an earlier valid_from do not displace the chronologically latest row.
+		with file.transaction():
+			afternoon = file.add_setting(T0 + 3600, "Helium", {"G1": 5.9, "G2": 1.0}, "start")
+			file.add_setting(T0, "Nitrogen", {"G1": 1.0, "G2": 1.0}, "imported")
+			file.describe("gauge", "G1", T0 - 3600, **dict(gauge, model="TPR"))
+		self.assertEqual(file.last_setting(), (afternoon, "Helium", {"G1": 5.9, "G2": 1.0}))
+		self.assertEqual(file.latest("gauge", "G1")["model"], "IKR")
 		with sqlite3.connect(file.path) as db:
-			self.assertEqual(db.execute("SELECT valid_from, model FROM gauge ORDER BY id").fetchall(), [(T0, "PKR"), (T0 + 2, "IKR")])
+			self.assertEqual(db.execute("SELECT valid_from, model FROM gauge ORDER BY id").fetchall(), [(T0, "PKR"), (T0 + 2, "IKR"), (T0 - 3600, "TPR")])
 			self.assertEqual(db.execute("SELECT unit, period_s FROM source").fetchall(), [("hPa", 0.1)])
 		db.close()
 

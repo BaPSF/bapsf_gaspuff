@@ -219,7 +219,7 @@ class DayFile:
 
 	def last_setting(self):
 		"""(id, species, {gauge key: multiplier}) of the latest setting row, or None."""
-		row = self._db.execute("SELECT id, species, multipliers FROM setting ORDER BY id DESC LIMIT 1").fetchone()
+		row = self._db.execute("SELECT id, species, multipliers FROM setting ORDER BY valid_from DESC, id DESC LIMIT 1").fetchone()
 		return None if row is None else (row[0], row[1], json.loads(row[2]))
 
 	def add_setting(self, valid_from, species, multipliers, how, selected_at=None, selected_by=None):
@@ -230,7 +230,7 @@ class DayFile:
 	def latest(self, table, key):
 		"""{field: value} of the latest row of `key` in the "gauge" or "source" table, or None. multipliers is JSON text."""
 		names = _DESCRIBED[table]
-		row = self._db.execute(f"SELECT {', '.join(names)} FROM {table} WHERE key = ? ORDER BY id DESC LIMIT 1", (key,)).fetchone()
+		row = self._db.execute(f"SELECT {', '.join(names)} FROM {table} WHERE key = ? ORDER BY valid_from DESC, id DESC LIMIT 1", (key,)).fetchone()
 		return None if row is None else dict(zip(names, row))
 
 	def describe(self, table, key, valid_from, **fields):
@@ -454,6 +454,7 @@ def history(directory, source, start, end, buckets, corrected=True):
 	"""Min, mean and max per time bucket, for a chart: [start, end) cut into `buckets` equal buckets.
 
 	Returns {"t": epoch s of the start of each bucket that holds readings, ascending,
+	         "width": bucket width in s (0.0 for an invalid range),
 	         "gauges": {gauge key: {"mean": array, "min": array, "max": array}}, as long as "t", NaN where the gauge has
 	                   no pressure in the bucket,
 	         "gas": [[epoch s, species], ...]: the selection in force at `start` (if the files tell), then each change}.
@@ -462,10 +463,13 @@ def history(directory, source, start, end, buckets, corrected=True):
 	finer than a minute and it lacks the minute still being filled. `source` None: the files' only source.
 	"""
 	start, end, buckets = _epoch(start), _epoch(end), int(buckets)
-	result = {"t": np.empty(0), "gauges": {}, "gas": []}
+	result = {"t": np.empty(0), "width": 0.0, "gauges": {}, "gas": []}
 	if not (math.isfinite(start) and math.isfinite(end) and end > start and buckets >= 1):
 		return result
+	if end - start > SAMPLE_RANGE_S:
+		buckets = min(buckets, max(1, int((end - start) // 60)))
 	width = (end - start) / buckets
+	result["width"] = width
 	bucket = f"CAST((time - {start!r}) / {width!r} AS INTEGER)"
 	if end - start <= SAMPLE_RANGE_S:
 		def columns(key):
