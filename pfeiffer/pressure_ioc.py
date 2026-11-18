@@ -92,7 +92,12 @@ class BaseWindow:
 		minute = int(time_s // 60)
 		if self._minute is None:
 			self._minute = minute
-		if minute > self._minute:  # a clock set back keeps summing the same minute
+		elif minute < self._minute:  # clock stepped back into an earlier minute: restart the open minute and drop future ones
+			self._minute, self._sum, self._count = minute, 0.0, 0
+			while self._means and self._means[-1][0] >= minute:
+				self._means.pop()
+			self._lowest = min(mean for _, mean in self._means) if len(self._means) >= self._ready else math.nan
+		elif minute > self._minute:
 			if self._count >= self._min_count:
 				self._means.append((self._minute, self._sum / self._count))
 			self._minute, self._sum, self._count = minute, 0.0, 0

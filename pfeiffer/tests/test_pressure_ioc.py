@@ -105,6 +105,15 @@ class BaseWindowTests(unittest.TestCase):
 		self.assertEqual(base.add(104 * 60), 5.0)  # minute 100 is older than three minutes
 		self.assertTrue(math.isnan(base.add(105 * 60)))  # nothing left: invalid again
 
+	def test_clock_step_backward_across_minutes_does_not_wedge(self):
+		base = BaseWindow(window_minutes=5, ready_minutes=1, min_count=5)
+		self.fill(base, 200, 9.0)
+		self.fill(base, 201, 4.0)
+		self.assertEqual(base.add(202 * 60), 4.0)
+		# NTP steps an unsynced future clock back to minute 100: future minutes are dropped and new ones advance normally.
+		self.assertTrue(math.isnan(self.fill(base, 100, 2.5)))
+		self.assertEqual(base.add(101 * 60), 2.5)
+
 
 #===============================================================================================================================================
 # The module with stand-in records
@@ -291,7 +300,7 @@ class ModuleTests(unittest.TestCase):
 		self.assertEqual(self.value("P:TPG1:SAMPLE:GAS"), "Argon")
 		self.assertEqual(self.value("P:G2:GAS_FACTOR"), 1.0)
 		# A file that names no listed species changes nothing.
-		self.selection_file.write_text("Neon\n")
+		self.selection_file.write_text("Neon\n", encoding="utf-8")
 		with self.assertLogs("pressure_ioc", "WARNING") as logs:
 			wait_for(lambda: logs.output, 5, "the warning about the file")
 		self.assertIn("the selection stays Argon", logs.output[0])
@@ -448,7 +457,7 @@ class IocTests(unittest.TestCase):
 		for name in ("G1:P", "G1:BASE.HIGH", f"{self.prefix}GAS:SPECIES"):
 			pv = epics.get_pv(name if "GAS" in name else f"{self.prefix}:{name}", connect=True, timeout=5)
 			self.assertFalse(pv.write_access, name)
-		records = self.ioc.db_path.read_text()
+		records = self.ioc.db_path.read_text(encoding="utf-8")
 		for name in (f"{self.prefix}:G1:P", f"{self.prefix}:TPG1:SAMPLE:SEQ", f"{self.prefix}GAS:SPECIES", f"{self.prefix}:STAT:STALE"):
 			self.assertIn(f'"{name}"', records)
 

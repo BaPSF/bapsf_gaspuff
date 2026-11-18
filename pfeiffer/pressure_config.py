@@ -6,6 +6,7 @@ Standard library only.
 """
 import math
 import os
+import posixpath
 import re
 from dataclasses import dataclass
 
@@ -125,7 +126,8 @@ def parse_gas(table):
 	_require(len({s.lower() for s in species}) == len(species), f"gas: species must be unique, got {species}")
 	_require(table["default"] in species, f"gas: default must be one of {species}")
 	path = table["selection_file"]
-	_require(type(path) is str and os.path.isabs(path), "gas: selection_file must be an absolute path")
+	_require(type(path) is str and (os.path.isabs(path) or posixpath.isabs(path)),
+	         "gas: selection_file must be an absolute path")
 	return Gas(prefix, tuple(species), table["default"], path)
 
 
