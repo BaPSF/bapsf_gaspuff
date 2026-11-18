@@ -253,17 +253,17 @@ class Tpg366:
 		except TimeoutError:
 			pass
 		except OSError as e:
-			raise self._fail(_os_error_text(e)) from e
+			raise self._fail(_peer_error_text(e)) from e
 
 	def _query(self, mnemonic):
-		self._send(mnemonic.encode("ascii") + _END)
+		self._send(mnemonic.encode("ascii") + _END, mnemonic)
 		reply = self._line(mnemonic)
 		if reply == _NAK:
-			self._send(_ENQ)  # with no valid request pending, <ENQ> returns the error word
+			self._send(_ENQ, mnemonic)  # with no valid request pending, <ENQ> returns the error word
 			raise Tpg366Nak(f"{mnemonic} refused: {_error_word_text(self._line(mnemonic))}")
 		if reply != _ACK:
 			raise self._fail(f"{mnemonic}: expected ACK, got {reply!r}")
-		self._send(_ENQ)
+		self._send(_ENQ, mnemonic)
 		try:
 			return self._line(mnemonic).decode("ascii").strip()
 		except UnicodeDecodeError as e:
@@ -275,7 +275,7 @@ class Tpg366:
 			raise self._fail(f"{mnemonic} reply {text!r} has {len(fields)} fields, expected {count}")
 		return fields
 
-	def _send(self, data):
+	def _send(self, data, mnemonic=""):
 		sock = self._sock
 		if sock is None:
 			raise Tpg366Error("not connected")
@@ -283,7 +283,8 @@ class Tpg366:
 			sock.settimeout(self.timeout_s)
 			sock.sendall(data)
 		except OSError as e:
-			raise self._fail(_os_error_text(e)) from e
+			prefix = f"{mnemonic}: " if mnemonic else ""
+			raise self._fail(f"{prefix}{_peer_error_text(e)}") from e
 
 	def _line(self, mnemonic):
 		"""The next line from the controller, without its <CR><LF>."""
@@ -303,7 +304,7 @@ class Tpg366:
 			except TimeoutError as e:
 				raise self._fail(f"{mnemonic}: no reply within {self.timeout_s:g} s") from e
 			except OSError as e:
-				raise self._fail(f"{mnemonic}: {_os_error_text(e)}") from e
+				raise self._fail(f"{mnemonic}: {_peer_error_text(e)}") from e
 			if not data:
 				raise self._fail(f"{mnemonic}: connection closed by the controller")
 			self._buffer += data
@@ -318,6 +319,12 @@ class Tpg366:
 
 def _os_error_text(e):
 	return e.strerror or str(e) or type(e).__name__
+
+
+def _peer_error_text(e):
+	if isinstance(e, (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)):
+		return "connection closed by the controller"
+	return _os_error_text(e)
 
 
 def _error_word_text(word):
