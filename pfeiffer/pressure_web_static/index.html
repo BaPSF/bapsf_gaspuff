@@ -344,7 +344,7 @@ function liveData() {
 function historyData() {
   const empty = [[], ...info.gauges.map(() => [])];
   if (!history) return empty;
-  const width = history.range / history.points, out = empty;
+  const width = history.width || (history.range / history.points), out = empty;
   history.t.forEach((t, i) => {
     if (i > 0 && t - history.t[i - 1] > 1.5 * width) {  // buckets without readings: a gap, not a line across
       out[0].push(history.t[i - 1] + width);
@@ -360,6 +360,7 @@ function buildPlots() {
   colors = Object.fromEntries(["ink", "muted", "grid", "warn", "alarm", "g1", "g2", "g3", "g4", "g5", "g6"].map(n => [n, token(`--${n}`)]));
   if (livePlot) livePlot.destroy();
   if (historyPlot) historyPlot.destroy();
+  historyZoomed = false;
   const base = {height: plotHeight(), tzDate, legend: {live: true}};
   livePlot = new uPlot({...base, width: byId("live-plot").clientWidth, scales: {y: {distr: 3}}, axes: axes("Pressure (Torr)"),
                         series: [{label: "Time"}, ...gaugeSeries()], hooks: {draw: [gasChangeHook(liveGasChanges)]}},
@@ -418,6 +419,7 @@ async function loadHistory() {
   const points = Math.max(100, Math.min(info.history_points_max, Math.round(byId("history-plot").clientWidth || 600)));
   const end = Math.ceil(hostNow()), start = end - rangeSeconds;
   const range = rangeSeconds, raw = rawView;
+  let ok = false;
   try {
     const response = await fetch(`api/history?start=${start}&end=${end}&points=${points}&raw=${raw ? 1 : 0}`);
     if (!response.ok) throw new Error(`${response.status} ${(await response.json().catch(() => ({}))).detail ?? response.statusText}`);
@@ -426,10 +428,12 @@ async function loadHistory() {
     history = {...answer, range, points};
     if (!historyZoomed) historyPlot.setData(historyData());
     noteHistory();
+    ok = true;
   } catch (error) {
     byId("history-note").textContent = `History not loaded: ${error.message}. It is tried again shortly.`;
   }
-  if (!closed) historyTimer = setTimeout(loadHistory, 1e3 * Math.min(HISTORY_REFRESH_S[1], Math.max(HISTORY_REFRESH_S[0], rangeSeconds / points)));
+  const delay = ok ? Math.min(HISTORY_REFRESH_S[1], Math.max(HISTORY_REFRESH_S[0], history.width || (rangeSeconds / points))) : HISTORY_REFRESH_S[0];
+  if (!closed) historyTimer = setTimeout(loadHistory, 1e3 * delay);
 }
 
 function noteHistory() {

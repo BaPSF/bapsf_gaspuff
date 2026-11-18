@@ -147,6 +147,40 @@ class ReadingTests(unittest.TestCase):
 		self.assertEqual((web.MAX_CONNECTIONS, web.KEEP_ALIVE_S, web.SEND_TIMEOUT_S), (80, 30, 30))
 		self.assertEqual((web.WS_MAX_SIZE, web.PING_INTERVAL_S, web.PING_TIMEOUT_S), (4096, 30, 60))
 
+	def test_timed_h11_cancels_keep_alive_once_headers_complete(self):
+		idle, send_response = object(), object()
+		cancelled = []
+
+		class BaseH11:
+			def __init__(self):
+				self.timeout_keep_alive = 30
+				self.timeout_keep_alive_handler = lambda: None
+				self.timeout_keep_alive_task = None
+				self.loop = types.SimpleNamespace(call_later=lambda delay, cb: types.SimpleNamespace(cancel=lambda: cancelled.append(delay)))
+				self.buf = b""
+				self.conn = types.SimpleNamespace(our_state=idle, receive_data=lambda d: setattr(self, "buf", self.buf + d))
+
+			def connection_made(self, transport):
+				pass
+
+			def handle_events(self):
+				if b"\r\n\r\n" in self.buf:
+					self.conn.our_state = send_response
+
+		modules = {name: types.ModuleType(name) for name in ("h11", "uvicorn", "uvicorn.protocols", "uvicorn.protocols.http", "uvicorn.protocols.http.h11_impl")}
+		modules["h11"].IDLE = idle
+		modules["uvicorn.protocols.http.h11_impl"].H11Protocol = BaseH11
+		with mock.patch.dict(sys.modules, modules):
+			proto = web._timed_h11_protocol()()
+		proto.connection_made(types.SimpleNamespace(get_extra_info=lambda _: None))
+		self.assertIsNotNone(proto.timeout_keep_alive_task)
+		proto.data_received(b"GET / ")  # incomplete headers: timer stays armed
+		self.assertEqual(cancelled, [])
+		self.assertIsNotNone(proto.timeout_keep_alive_task)
+		proto.data_received(b"HTTP/1.1\r\nHost: localhost\r\n\r\n")  # complete headers: timer cancelled
+		self.assertEqual(cancelled, [30])
+		self.assertIsNone(proto.timeout_keep_alive_task)
+
 
 #===================================================================================================================================================
 # The history: what api/history returns is what the store's reader returns
@@ -174,6 +208,7 @@ class HistoryTests(unittest.TestCase):
 		answer = json.loads(web.history_json(self.dir, "TPG1", start, end, points, corrected))
 		expected = pressure_db.history(self.dir, "TPG1", start, end, points, corrected=corrected)
 		np.testing.assert_allclose(answer["t"], expected["t"], atol=1e-3)
+		self.assertAlmostEqual(answer["width"], expected["width"])
 		self.assertEqual(sorted(answer["gauges"]), sorted(expected["gauges"]))
 		for key, values in expected["gauges"].items():
 			for name, array in values.items():
@@ -190,12 +225,15 @@ class HistoryTests(unittest.TestCase):
 		self.assertEqual(long["from"], "minutes")
 		self.assertEqual(len(long["t"]), 180)  # 3 h of 1-minute buckets
 		self.assertEqual([g[1] for g in long["gas"]], ["Helium", "Argon"])
+		eight_hours = self.check(T0, T0 + 8 * 3600, 1400, True)  # 8 h on a wide screen: still 60 s buckets, so no false gaps
+		self.assertEqual(eight_hours["width"], 60.0)
+		self.assertTrue(np.all(np.diff(eight_hours["t"]) <= 1.5 * eight_hours["width"]))
 		raw = self.check(T0, T0 + 5 * 3600, 300, False)
 		self.assertAlmostEqual(raw["gauges"]["G1"]["mean"][0], long["gauges"]["G1"]["mean"][0] / 5.9)
 
 	def test_no_files_is_an_empty_answer(self):
 		self.assertEqual(json.loads(web.history_json(self.dir, "TPG1", T0, T0 + 60, 10, True)),
-		                 {"t": [], "gauges": {}, "gas": [], "from": "readings"})
+		                 {"t": [], "width": 6.0, "gauges": {}, "gas": [], "from": "readings"})
 
 
 #===================================================================================================================================================
@@ -401,9 +439,16 @@ class FakeControllerTests(unittest.TestCase):
 
 class DeployTests(unittest.TestCase):
 	def test_a_bad_config_stops_the_start(self):
-		with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(__import__("io").StringIO()) as stderr:
-			self.assertEqual(web.main(["--config", str(Path(tmp) / "missing.toml"), "--dir", tmp]), 2)
-		self.assertIn("missing.toml", stderr.getvalue())
+		with tempfile.TemporaryDirectory() as tmp:
+			with contextlib.redirect_stderr(__import__("io").StringIO()) as stderr:
+				self.assertEqual(web.main(["--config", str(Path(tmp) / "missing.toml"), "--dir", tmp]), 2)
+			self.assertIn("missing.toml", stderr.getvalue())
+			config = Path(tmp) / "pressure.toml"
+			config.write_text(ioc_config("P", types.SimpleNamespace(host="127.0.0.1", port=8000), Path(tmp) / "gas_species"), encoding="utf-8")
+			for bad_port in ("abc", "0", "70000"):
+				with mock.patch.dict(os.environ, {"PRESSURE_WEB_PORT": bad_port}), contextlib.redirect_stderr(__import__("io").StringIO()) as stderr:
+					self.assertEqual(web.main(["--config", str(config), "--dir", tmp]), 2)
+				self.assertTrue(stderr.getvalue())
 
 	def test_the_example_config_is_what_the_page_reads(self):
 		"""The page takes everything from the IOC's own config; the test config is the example's shape."""
@@ -430,7 +475,8 @@ class DeployTests(unittest.TestCase):
 		exec_start = next(line for line in web_unit if line.startswith("ExecStart="))
 		self.assertIn("pfeiffer/pressure_web.py --config /etc/diag-ioc/pressure.toml --dir /var/lib/pressure", exec_start)
 		store = unit("pressure-store")
-		self.assertIn("StateDirectory=pressure", store)  # the directory the page reads
+		for line in ("StateDirectory=pressure", "Environment=OPENBLAS_NUM_THREADS=1", "NoNewPrivileges=yes", "ProtectSystem=strict"):
+			self.assertIn(line, store)
 
 	def test_nginx_site(self):
 		text = (DEPLOY / "nginx" / "pressure.nginx.example").read_text(encoding="utf-8")
@@ -525,6 +571,30 @@ class PageSessionTests(unittest.TestCase):
 	def test_visible_tab_stays_for_days(self):
 		result = self.run_session("feedFrames(); advance(3 * 24 * HOUR); report();")
 		self.assertEqual((result["sockets"], result["closed"], result["closes"]), (1, False, []))
+
+	def test_index_script_history_data_keeps_minute_series_connected(self):
+		html = (PFEIFFER / "pressure_web_static" / "index.html").read_text(encoding="utf-8")
+		script = html.split("<script>\n", 1)[1].rsplit("\nstart();\n</script>", 1)[0]
+		probe = (
+			"const vm = require('vm'), fs = require('fs');\n"
+			"const code = fs.readFileSync(process.env.INDEX_JS, 'utf8');\n"
+			"new vm.Script(code + '\\nstart();');\n"
+			"const ctx = vm.createContext({Math, Number, String, Object, Array, Date});\n"
+			"vm.runInContext(code + `\n"
+			"  info = {gauges: [{key: 'G1'}]};\n"
+			"  history = {t: [0, 60, 120, 420], width: 60, range: 28800, points: 1400, gauges: {G1: {mean: [1e-6, 2e-6, 3e-6, 4e-6]}}};\n"
+			"  globalThis.out = historyData();\n`, ctx);\n"
+			"console.log(JSON.stringify(ctx.out));\n"
+		)
+		with tempfile.NamedTemporaryFile("w", suffix=".js", encoding="utf-8", delete=False) as f:
+			f.write(script)
+			js_path = Path(f.name)
+		self.addCleanup(js_path.unlink)
+		completed = subprocess.run(["node", "-e", probe], env={**os.environ, "INDEX_JS": str(js_path)},
+		                           capture_output=True, text=True, timeout=30, check=True)
+		times, values = json.loads(completed.stdout.strip())
+		self.assertEqual(times, [30, 90, 150, 180, 450])  # one gap only across 120..420, none between 0, 60, 120
+		self.assertEqual(values, [1e-6, 2e-6, 3e-6, None, 4e-6])
 
 
 if __name__ == "__main__":

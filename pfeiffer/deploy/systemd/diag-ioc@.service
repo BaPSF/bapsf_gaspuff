@@ -13,7 +13,9 @@
 #   cp pfeiffer/deploy/systemd/diag-ioc@.service /etc/systemd/system/ && systemctl daemon-reload
 #   systemctl enable --now diag-ioc@pressure
 # Log: journalctl -u diag-ioc@pressure. A host drop-in (/etc/systemd/system/diag-ioc@pressure.service.d/site.conf) holds
-# only what differs per machine, e.g. EPICS_CAS_INTF_ADDR_LIST and EPICS_PVAS_INTF_ADDR_LIST in /etc/diag-ioc/pressure.env.
+# only what differs per machine, e.g. EPICS_CAS_INTF_ADDR_LIST and EPICS_PVAS_INTF_ADDR_LIST in /etc/diag-ioc/pressure.env,
+# and IPAddressDeny= / IPAddressAllow= so the IOC reaches only the lab subnet, localhost and this controller's address on
+# the instrument network.
 # Not yet run on a machine: at the first start, check the log for the controller's model and caget LAPD:MACH:PRESSURE:G1:P.
 [Unit]
 Description=diag_ioc EPICS IOC (%i)

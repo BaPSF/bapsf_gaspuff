@@ -330,14 +330,15 @@ def monitor_ioc(feed):
 # History
 
 def history_json(directory, source, start, end, points, corrected):
-	"""pressure_db.history() as the JSON text api/history returns: {"t": [...], "gauges": {key: {"mean", "min", "max":
-	[...]}}, "gas": [[epoch s, species], ...], "from": "readings" or "minutes"}; null where a gauge has no pressure."""
+	"""pressure_db.history() as the JSON text api/history returns: {"t": [...], "width": s, "gauges": {key: {"mean",
+	"min", "max": [...]}}, "gas": [[epoch s, species], ...], "from": "readings" or "minutes"}; null where a gauge has
+	no pressure."""
 	h = pressure_db.history(directory, source, start, end, points, corrected=corrected)
 
 	def numbers(array):
 		return [_number(v) for v in np.asarray(array, dtype=float).tolist()]
 
-	return json.dumps({"t": [round(t, 3) for t in h["t"].tolist()],
+	return json.dumps({"t": [round(t, 3) for t in h["t"].tolist()], "width": h["width"],
 	                   "gauges": {key: {k: numbers(v) for k, v in values.items()} for key, values in h["gauges"].items()},
 	                   "gas": h["gas"], "from": "readings" if end - start <= pressure_db.SAMPLE_RANGE_S else "minutes"},
 	                  allow_nan=False, separators=(",", ":"))
@@ -397,19 +398,25 @@ def _timed_h11_protocol():
 	complete, plus TCP_USER_TIMEOUT_S. In uvicorn 0.54 that timer starts only after a response and any byte cancels it,
 	so a connection that never completes a request would stay open. Overrides two of H11Protocol's methods: recheck on
 	an upgrade of uvicorn."""
+	import h11
 	from uvicorn.protocols.http.h11_impl import H11Protocol
 
 	class TimedH11(H11Protocol):
 		def connection_made(self, transport):
 			super().connection_made(transport)
+			if self.timeout_keep_alive_task is not None:
+				self.timeout_keep_alive_task.cancel()
 			self.timeout_keep_alive_task = self.loop.call_later(self.timeout_keep_alive, self.timeout_keep_alive_handler)
 			sock = transport.get_extra_info("socket")
 			if sock is not None and hasattr(socket, "TCP_USER_TIMEOUT"):
 				sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, int(TCP_USER_TIMEOUT_S * 1000))
 
-		def data_received(self, data):  # H11Protocol's, without its _unset_keepalive_if_required()
+		def data_received(self, data):  # H11Protocol's, cancelling keep-alive only once full request headers arrive
 			self.conn.receive_data(data)
 			self.handle_events()
+			if self.conn.our_state is not h11.IDLE and self.timeout_keep_alive_task is not None:
+				self.timeout_keep_alive_task.cancel()
+				self.timeout_keep_alive_task = None
 
 	return TimedH11
 
@@ -526,13 +533,16 @@ def main(argv=None):
 	logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, stream=sys.stdout)  # under systemd the journal keeps it
 	try:
 		layout = load_layout(args.config)
+		host = os.environ.get("PRESSURE_WEB_HOST", "127.0.0.1")
+		port = int(os.environ.get("PRESSURE_WEB_PORT", "8081"))
+		if not 1 <= port <= 65535:
+			raise ValueError(f"PRESSURE_WEB_PORT must be 1..65535, got {port}")
 	except (OSError, ValueError) as e:
 		print(f"pressure_web: {e}", file=sys.stderr)
 		return 2
 	import uvicorn
 
 	logging.getLogger("uvicorn.error").addFilter(ThrottledLog(LOG_LINES_PER_MIN))
-	host, port = os.environ.get("PRESSURE_WEB_HOST", "127.0.0.1"), int(os.environ.get("PRESSURE_WEB_PORT", "8081"))
 	log.info("pressure_web for %s, day files in %s, on %s:%d", layout.prefix, args.dir, host, port)
 	uvicorn.run(create_app(layout, args.dir), **server_settings(host, port))
 	return 0
