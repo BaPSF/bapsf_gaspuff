@@ -25,12 +25,17 @@ Group=diag-ioc
 WorkingDirectory=/opt/bapsf_gaspuff
 Environment=PYTHONPATH=/opt/bapsf_gaspuff/pfeiffer
 Environment=PYTHONUNBUFFERED=1
+Environment=OPENBLAS_NUM_THREADS=1
 # The IOC runs on this machine. Loopback only, so the store finds each PV once, and reaches nothing else: neither the
 # gauge controller nor any other instrument.
 Environment=EPICS_PVA_ADDR_LIST=127.0.0.1
 Environment=EPICS_PVA_AUTO_ADDR_LIST=NO
 IPAddressDeny=any
 IPAddressAllow=localhost
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
 # /var/lib/pressure, the store's alone.
 StateDirectory=pressure
 ExecStart=/opt/bapsf_gaspuff/.venv/bin/python /opt/bapsf_gaspuff/pfeiffer/pressure_store.py --config /etc/diag-ioc/pressure.toml --dir /var/lib/pressure

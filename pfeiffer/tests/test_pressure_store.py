@@ -194,6 +194,39 @@ class StoreTests(unittest.TestCase):
 		store.close()
 		self.assertEqual(self.events()[-1][0], "store stop")
 
+	def test_multiple_outages_and_gas_changes_in_one_commit_keep_their_pvs(self):
+		store = self.store()
+		self.describe(store)
+		t = T0 + 3600
+		choices = ["Helium", "Hydrogen", "Argon", "Nitrogen"]
+		self.feed(store, group(1, t))
+		# Outage and recovery in the same commit batch, with ERROR updates arriving after their samples.
+		self.feed(store, group(2, t + 0.1, g1=NO_REPLY[0], g2=NO_REPLY[1], read_s=NAN))
+		store.on_pv("P:TPG1:ERROR", {"value": "PRX: connection closed by the controller"})
+		self.feed(store, group(3, t + 0.6))
+		store.on_pv("P:TPG1:ERROR", {"value": ""})
+		# Two gas selections in the same commit batch, plus a non-finite p_raw that must become NULL rather than Inf.
+		self.feed(store, group(4, t + 0.7, gas="Argon", g1=(math.inf, 0.8, 2, 2)))
+		store.on_pv("TEST:GAS:SPECIES", {"value": {"index": 2, "choices": choices}})
+		store.on_pv("TEST:GAS:SINCE", {"value": t + 0.65})
+		store.on_pv("TEST:GAS:BY", {"value": "alice"})
+		store.on_pv("TEST:GAS:SPECIES", {"value": {"index": 1, "choices": choices}})
+		store.on_pv("TEST:GAS:SINCE", {"value": t + 0.75})
+		store.on_pv("TEST:GAS:BY", {"value": "bob"})
+		self.feed(store, group(5, t + 0.8, gas="Hydrogen", g1=(2e-6, 2.4, 0, 0)))
+		with self.assertLogs("pressure_store", "WARNING"):
+			store.on_group(group(6, t + 0.9, g1=(2e-6, math.inf, 0, 0)))  # invalid gas_factor
+		self.assertTrue(store.write())
+		self.assertIn(("source lost", "TPG1", "the controller does not answer: PRX: connection closed by the controller"), self.events())
+		self.assertIn(("source recovered", "TPG1", "the controller answers again"), self.events())
+		self.assertEqual(self.query("SELECT species, selected_at, selected_by FROM setting ORDER BY id"), [
+			("Helium", T0 + 60.0, "operator"),
+			("Argon", t + 0.65, "alice"),
+			("Hydrogen", t + 0.75, "bob"),
+		])
+		self.assertEqual(self.query("SELECT p_raw_g1 FROM sample_tpg1 WHERE seq = 4"), [(None,)])
+		self.assertEqual(store.unreadable, 1)
+
 	def test_a_gauge_that_flickers_does_not_flood_the_events(self):
 		store = self.store()
 		t = T0 + 3600
@@ -331,7 +364,7 @@ class StoreTests(unittest.TestCase):
 				opened["P:TPG1:SAMPLE"](group(seq, time.time()))
 				time.sleep(0.01)
 			wait_for(lambda: len(pressure_db.read(self.dir / "store", start, start + 60).time) == 3, 10, "the commit")  # while it runs
-			os.kill(os.getpid(), signal.SIGTERM)
+			signal.raise_signal(signal.SIGTERM)
 
 		modules = {name: types.ModuleType(name) for name in ("p4p", "p4p.client", "p4p.client.thread")}
 		modules["p4p.client.thread"].Context = Context

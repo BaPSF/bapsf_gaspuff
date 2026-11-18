@@ -136,8 +136,12 @@ def sample_from_group(value, gauge_keys):
 	gauges = []
 	for key in gauge_keys:
 		gauge = value[key.lower()]
-		gauges.append(GaugeSample(float(gauge["p_raw"]), float(gauge["gas_factor"]), int(gauge["status"]), int(gauge["raw_status"])))
-	return GroupSample(seq, time_s, str(value["gas"]), float(value["read_s"]), tuple(gauges))
+		p_raw, gas_factor = float(gauge["p_raw"]), float(gauge["gas_factor"])
+		if not math.isfinite(gas_factor):
+			raise ValueError(f"sample {seq} gauge {key} has gas_factor {gas_factor}")
+		gauges.append(GaugeSample(p_raw if math.isfinite(p_raw) else math.nan, gas_factor, int(gauge["status"]), int(gauge["raw_status"])))
+	read_s = float(value["read_s"])
+	return GroupSample(seq, time_s, str(value["gas"]), read_s if math.isfinite(read_s) else math.nan, tuple(gauges))
 
 
 def pv_value(value):
@@ -376,9 +380,7 @@ class Store:
 	def _apply(self, file, items):
 		s, source, keys = self._state, self.layout.source.key, self.layout.gauge_keys
 		rows = []
-		# PV updates first: a sample and the PVs that explain it (who selected the gas, why the read failed) arrive on
-		# separate monitors, in no fixed order.
-		for when, kind, payload in sorted(items, key=lambda item: item[1] != "pv"):
+		for i, (when, kind, payload) in enumerate(items):
 			if kind == "pv":
 				what, value = payload
 				if s.pv.get(what) != value:
@@ -388,7 +390,7 @@ class Store:
 				name, text, subject = payload
 				self._limited(file, when, name, text, subject)
 			else:
-				row = self._sample(file, payload)
+				row = self._sample(file, payload, items, i)
 				if row is not None:
 					rows.append(row)
 		if rows:
@@ -422,7 +424,7 @@ class Store:
 			s.status.update(zip(self.layout.gauge_keys, (gauge.status for gauge in sample.gauges)))
 		return True
 
-	def _sample(self, file, sample):
+	def _sample(self, file, sample, items, index):
 		"""Events and the setting row of one sample; returns its row for the sample table, or None for a repeated one."""
 		s, keys, source = self._state, self.layout.gauge_keys, self.layout.source.key
 		if self._repeated(sample):
@@ -439,10 +441,11 @@ class Store:
 		lost = _lost(sample)
 		if lost != s.lost:
 			if lost:
-				reason = s.pv.get(("error", source, None)) or "no reason given"
+				reason = self._error_for(items, index)
 				self._limited(file, sample.time, "source lost", f"the controller does not answer: {reason}", source)
 			else:
 				self._limited(file, sample.time, "source recovered", "the controller answers again", source)
+				s.pv[("error", source, None)] = ""
 			s.lost = lost
 		if not lost:  # the sample that starts an outage says nothing about the gauges
 			for key, gauge in zip(keys, sample.gauges):
@@ -450,10 +453,45 @@ class Store:
 				if old is not None and old != gauge.status:
 					self._limited(file, sample.time, "status", f"{_status(old)} -> {_status(gauge.status)}", key)
 				s.status[key] = gauge.status
-		setting = self._setting(file, sample)
+		setting = self._setting(file, sample, items, index)
 		return (sample.time, sample.seq, setting, sample.read_s, *(v for g in sample.gauges for v in (g.p_raw, g.status, g.raw_status)))
 
-	def _setting(self, file, sample):
+	def _error_for(self, items, index):
+		"""Why the source was lost at items[index]: a sample and <P>:<S>:ERROR arrive on separate monitors, in either order."""
+		key = ("error", self.layout.source.key, None)
+		reason = self._state.pv.get(key)
+		if reason:
+			return reason
+		for _, kind, payload in items[index + 1:]:
+			if kind == "pv" and payload[0] == key:
+				return payload[1] or "no reason given"
+			if kind == "sample" and not _lost(payload):
+				break
+		return "no reason given"
+
+	def _gas_for(self, items, index, species):
+		"""(selected_at, selected_by) for `species` at items[index]: GAS:* and SAMPLE arrive on separate monitors."""
+		pv = {name: self._state.pv.get(("gas", None, name)) for name in ("species", "since", "by")}
+		ahead = []
+		for _, kind, payload in items[index + 1:]:
+			if kind == "sample" and payload.gas != species:
+				break
+			if kind == "pv" and payload[0][0] == "gas":
+				ahead.append((payload[0][2], payload[1]))
+		if pv["species"] == species and any(field == "species" and value != species for field, value in ahead):
+			return pv["since"], pv["by"]
+		matched = pv["species"] == species
+		seen = set()
+		for field, value in ahead:
+			if matched and ((field == "species" and value != species) or field in seen):
+				break
+			pv[field] = value
+			if matched or pv["species"] == species:
+				matched = True
+				seen.add(field)
+		return (pv["since"], pv["by"]) if matched else (None, None)
+
+	def _setting(self, file, sample, items, index):
 		"""The id of the sample's setting row in `file`, added if the gas or a multiplier is not that of the last row."""
 		s, keys = self._state, self.layout.gauge_keys
 		key = (sample.gas, tuple(gauge.gas_factor for gauge in sample.gauges))
@@ -466,9 +504,7 @@ class Store:
 		else:
 			previous = s.setting_key or (last and (last[1], tuple(last[2].get(k) for k in keys)))
 			how = "start" if not previous or previous == key else "selection" if previous[0] != sample.gas else "config"
-			# Who selected the gas and when, if the selection PVs already show this gas.
-			selected = [s.pv.get(("gas", None, name)) for name in ("species", "since", "by")]
-			since, by = selected[1:] if selected[0] == sample.gas else (None, None)
+			since, by = self._gas_for(items, index, sample.gas)
 			setting = file.add_setting(sample.time, sample.gas, multipliers, how, since, by)
 			if how == "selection":
 				self._limited(file, sample.time, "gas", f"{previous[0]} -> {sample.gas}" + (f", selected by {by}" if by else ""))
