@@ -483,12 +483,13 @@ class Store:
 		matched = pv["species"] == species
 		seen = set()
 		for field, value in ahead:
-			if matched and ((field == "species" and value != species) or field in seen):
-				break
+			if field in seen or (matched and field == "species" and value != species):
+				if matched:
+					break
+				seen.clear()
 			pv[field] = value
-			if matched or pv["species"] == species:
-				matched = True
-				seen.add(field)
+			seen.add(field)
+			matched = pv["species"] == species
 		return (pv["since"], pv["by"]) if matched else (None, None)
 
 	def _setting(self, file, sample, items, index):
