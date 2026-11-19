@@ -72,7 +72,7 @@ The sensor to plot (`sensor_number`) and the rolling window length (`n_points`) 
 
 ### EPICS pressure monitor (in progress)
 
-A Linux pressure monitor (EPICS IOC, SQLite store, live web page) is being built next to the logger above, which stays unchanged as the reference. The store and the page are not written yet. So far:
+A Linux pressure monitor (EPICS IOC, SQLite store, live web page) is being built next to the logger above, which stays unchanged as the reference. The store is not written yet (it comes in its own pull request). So far:
 
 | File | Purpose |
 |------|---------|
@@ -82,6 +82,9 @@ A Linux pressure monitor (EPICS IOC, SQLite store, live web page) is being built
 | [pfeiffer/pressure_config.py](pfeiffer/pressure_config.py) | Checks the IOC module's options. A wrong value or a placeholder left in place stops the IOC at start and names the key. |
 | [pfeiffer/pressure_gas.py](pfeiffer/pressure_gas.py) | The gas selection: the command that selects the gas in the machine, and the file it writes. |
 | [pfeiffer/deploy/diag-ioc/](pfeiffer/deploy/diag-ioc/) | `pressure.toml.example`, the IOC's config with every key explained, and `readonly.acf`, which makes every PV read-only. |
+| [pfeiffer/pressure_web.py](pfeiffer/pressure_web.py), [pfeiffer/pressure_web_static/](pfeiffer/pressure_web_static/) | The read-only browser page and its server: a tile per gauge, the gas selection, the last 5 minutes and the history. |
+| [pfeiffer/web_shell.py](pfeiffer/web_shell.py) | The page server's viewer limits and uvicorn settings, the same as the interferometer page's. Nothing in it is about pressure. |
+| [pfeiffer/deploy/systemd/](pfeiffer/deploy/systemd/), [pfeiffer/deploy/nginx/](pfeiffer/deploy/nginx/), [pfeiffer/deploy/bin/](pfeiffer/deploy/bin/) | Examples for the Linux machine: the units of the IOC and the page, the nginx site, and the `lapd-gas` command. |
 | [pfeiffer/tests/](pfeiffer/tests/) | Tests against the fake controller: `python -m unittest discover -s pfeiffer/tests`. |
 
 The controller accepts one network client, so the old logger and the new monitor cannot read it at the same time. The IOC is that one client; everything else reads PVs.
@@ -111,7 +114,7 @@ PYTHONPATH=pfeiffer .venv/bin/python -m diag_ioc --config <config directory>/pre
 | `<P>:<G>:GAS_FACTOR` | This gauge's multiplier for the selected gas. `<P>:<G>:GAS_FACTORS` holds its multiplier for every gas. |
 | `<P>:<G>:STATUS` | 0 ok, 1 underrange, 2 overrange, 3 sensor error, 4 off, 5 no gauge, 6 identification error, 7 other, 8 no reply from the controller. |
 | `<P>:<G>:RAW_STATUS` | The controller's own status code (-1 with status 8). |
-| `<P>:<G>:BASE` | Torr, base pressure: the lowest 1-minute mean of `P_RAW` in the last `base_window_h` hours. Its alarm limits are the gauge's `base_warning_torr` (MINOR) and `base_alarm_torr` (MAJOR). Invalid until the window holds `base_ready_min` minutes; the window starts empty at every IOC start. |
+| `<P>:<G>:BASE` | Torr, base pressure: the lowest 1-minute mean of `P_RAW` in the last `base_window_h` hours (`<P>:BASE_WINDOW_H`). Its alarm limits are the gauge's `base_warning_torr` (MINOR) and `base_alarm_torr` (MAJOR). Invalid until the window holds `base_ready_min` minutes; the window starts empty at every IOC start. |
 | `<P>:<G>:NAME`, `SOURCE`, `CHANNEL` | From the config: where the gauge sits, and its controller and channel. |
 | `<P>:<G>:MODEL`, `DEVICE_GAS`, `DEVICE_NAME` | As the controller reports them: gauge type, its own gas setting for the channel (MINOR alarm unless Nitrogen), the name stored in it. |
 | `<P>:<S>:SAMPLE` | PVA group: one update per reading with `seq`, `time`, `gas`, `read_s` and for each gauge `<g>.p`, `<g>.p_raw`, `<g>.gas_factor`, `<g>.status`, `<g>.raw_status`, `<g>.base`. |
@@ -149,6 +152,65 @@ python -m unittest discover -s pfeiffer/tests
 - The driver, options and gas selection tests need nothing but Python 3.11 or later.
 - The IOC module tests need `bapsf_epics_core`. Those that start a real IOC also need `softioc` and `pyepics`. They are skipped where a package is missing.
 - Nothing here has been run against the real controller.
+
+#### The page
+
+`pressure_web.py` serves one read-only page. It is a PVA client of the IOC on the same machine, and its own process.
+
+```bash
+.venv/bin/pip install fastapi uvicorn websockets -c pfeiffer/constraints.txt
+cd pfeiffer
+EPICS_PVA_ADDR_LIST=127.0.0.1 EPICS_PVA_AUTO_ADDR_LIST=NO ../.venv/bin/python pressure_web.py \
+    --prefix LAPD:MACH:PRESSURE --source TPG1 --gas-prefix LAPD:MACH:GAS --store-dir /var/lib/pressure
+# then open http://127.0.0.1:8081/
+```
+
+- **What it shows.** A tile per gauge (pressure corrected for gas, the gauge's own reading and multiplier, status, base pressure and its limit), the gas selection, every reading of the last 5 minutes, and a history chart from 1 hour to 30 days. A base-pressure warning or alarm colours the gauge's tile and adds a bar at the top.
+- **Where it comes from.** Readings come from the group `<P>:<S>:SAMPLE`, one update per reading. Gauge names, models, limits and the gas choices come from the IOC's records. The page has no config file of its own: the three names on the command line are the IOC config's module prefix, source key and gas prefix.
+- **Read-only.** The page never writes a PV and sends nothing back. The gas row only shows the selection made with `pressure_gas.py`.
+- **History** is read from the store's day files through `pressure_db.history()`. Without `--store-dir`, or without the store's code, the page runs with no history chart.
+- **Viewers.** 20 at a time and 3 per address, as on the interferometer page. A closed page does not reconnect by itself: reload it. A tab hidden for 15 minutes gives its place back.
+- **Times** are the machine's clock in Los Angeles time, never the browser's. "Waiting" appears 3 s after the last reading.
+- **After a restart of the page** the 5-minute chart starts empty. History is unaffected, because the page keeps no copy of it.
+- The page tests are part of `pfeiffer/tests`. They need `fastapi`, `uvicorn` and `websockets`; one starts the fake controller and a real IOC. Where PVA cannot run they read the IOC over CA, so the page's own use of PVA has not run yet.
+
+#### Installing on the Linux machine
+
+Examples are in [pfeiffer/deploy/](pfeiffer/deploy/). Files with a `<...>` placeholder are copied to the machine and filled in there; the filled-in copies are never committed. None of this has been tried on a machine yet.
+
+```bash
+# As root. 1: the account, the checkout and its environment
+useradd --system --home-dir /var/lib/diag-ioc --no-create-home --shell /usr/sbin/nologin diag-ioc
+git clone https://github.com/BaPSF/bapsf_gaspuff.git /opt/bapsf_gaspuff
+cd /opt/bapsf_gaspuff && python3 -m venv .venv
+.venv/bin/pip install "bapsf-epics-core[ioc,clients] @ git+https://github.com/BaPSF/bapsf_epics_core.git@<tag>" \
+    fastapi uvicorn websockets -c pfeiffer/constraints.txt
+
+# 2: the IOC's config
+install -d /etc/diag-ioc && cp pfeiffer/deploy/diag-ioc/readonly.acf /etc/diag-ioc/
+cp pfeiffer/deploy/diag-ioc/pressure.toml.example /etc/diag-ioc/pressure.toml    # then replace every <...> placeholder
+
+# 3: who may select the gas: the members of one group (the name is an example)
+groupadd --system lapd-gas && usermod -aG lapd-gas <operator account>
+install -d -o diag-ioc -g diag-ioc -m 0755 /var/lib/diag-ioc                      # before the next line, or systemd resets its owner
+install -d -o root -g lapd-gas -m 2775 /var/lib/diag-ioc/pressure                # the directory of the config's selection_file
+install -m 0755 pfeiffer/deploy/bin/lapd-gas /usr/local/bin/lapd-gas
+
+# 4: the IOC
+cp pfeiffer/deploy/systemd/diag-ioc@.service /etc/systemd/system/
+install -D -m 0644 <filled-in diag-ioc@pressure.site.conf.example> /etc/systemd/system/diag-ioc@pressure.service.d/site.conf
+systemctl daemon-reload && systemctl enable --now diag-ioc@pressure
+
+# 5: the store (pressure-store.service, which comes with the store's code), then the page, then nginx
+#    (nginx's steps are at the top of pfeiffer/deploy/nginx/diagnostic.nginx.example)
+cp pfeiffer/deploy/systemd/pressure-web.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now pressure-web
+```
+
+- The page is then at `http://<lab address>/diagnostic/pressure/`. The page server itself listens on `127.0.0.1:8081` only; nginx is the one way in.
+- All units run as `diag-ioc` and start at boot.
+- `lapd-gas` shows the selection; `lapd-gas argon` selects a gas.
+- The controller's address is in two host files, `/etc/diag-ioc/pressure.toml` and the IOC unit's `site.conf`. Change both together.
 
 ---
 

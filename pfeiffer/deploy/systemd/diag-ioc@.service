@@ -1,0 +1,45 @@
+# One diag_ioc instance per config: `systemctl enable --now diag-ioc@pressure` runs /etc/diag-ioc/pressure.toml.
+# The same unit as the interferometer's, for this checkout: the pressure module is not an installed package, so
+# PYTHONPATH names its directory. Do not install it beside another diag-ioc@.service on one machine.
+# Install as root (README, "Installing on the Linux machine", has every step in order):
+#   useradd --system --home-dir /var/lib/diag-ioc --no-create-home --shell /usr/sbin/nologin diag-ioc   # if not there yet
+#   git clone ... /opt/bapsf_gaspuff          # the operation checkout, root-owned; the services only read it
+#   cd /opt/bapsf_gaspuff && python3 -m venv .venv
+#   .venv/bin/pip install "bapsf-epics-core[ioc,clients] @ git+https://github.com/BaPSF/bapsf_epics_core.git@<tag>" \
+#       fastapi uvicorn websockets -c pfeiffer/constraints.txt
+#   install -d /etc/diag-ioc && cp pfeiffer/deploy/diag-ioc/readonly.acf /etc/diag-ioc/
+#   cp pfeiffer/deploy/diag-ioc/pressure.toml.example /etc/diag-ioc/pressure.toml   # then replace every <...> placeholder
+#   cp pfeiffer/deploy/systemd/diag-ioc@.service /etc/systemd/system/
+#   install -D -m 0644 <the host's copy of diag-ioc@pressure.site.conf.example> /etc/systemd/system/diag-ioc@pressure.service.d/site.conf
+#   systemctl daemon-reload && systemctl enable --now diag-ioc@pressure
+# Log: journalctl -u diag-ioc@pressure.
+[Unit]
+Description=diag_ioc EPICS IOC (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# diag-ioc, a system account with no login, shared with the store and the page. Never root: as root EPICS locks all
+# memory in RAM.
+User=diag-ioc
+Group=diag-ioc
+WorkingDirectory=/opt/bapsf_gaspuff
+# Where the config's factory ("pressure_ioc:PressureModule") is found.
+Environment=PYTHONPATH=/opt/bapsf_gaspuff/pfeiffer
+Environment=PYTHONUNBUFFERED=1
+# EPICS_* settings, e.g. EPICS_CAS_INTF_ADDR_LIST and EPICS_PVAS_INTF_ADDR_LIST.
+EnvironmentFile=-/etc/diag-ioc/%i.env
+ExecStart=/opt/bapsf_gaspuff/.venv/bin/python -m diag_ioc --config /etc/diag-ioc/%i.toml
+# /var/lib/diag-ioc, kept across stops: the config's db_dir, where each instance writes <name>.db (every PV) at start.
+# The gas selection file lives in its pressure/ subdirectory, which the IOC only reads (README).
+StateDirectory=diag-ioc
+# Which addresses the IOC may reach differs per machine: the host's drop-in (diag-ioc@pressure.site.conf.example).
+# SIGTERM: the IOC closes the controller connection and exits within a few seconds.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

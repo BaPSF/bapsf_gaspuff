@@ -1,0 +1,131 @@
+<!doctype html>
+<!-- Read-only page of pressure_web.py. Layout: status header, alarm bar, gas row, one tile per gauge, live chart,
+     history chart. Plain and close to the interferometer page: system font, no framework, uPlot for the charts.
+     Every link is relative, so the page works under any proxy path (deploy/nginx/). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chamber pressure</title>
+<link rel="stylesheet" href="static/uPlot.min.css">
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f4f5f7; --ink: #1c1c1c; --muted: #5f6368; --line: #d5d8dc; --bar: #e6e8eb; --grid: #e3e5e8;
+    --live: #1a7f37; --idle: #6b7075; --off: #b42318; --on-solid: #ffffff;
+    --warn: #fab219; --warn-bg: #fff4d6; --warn-ink: #5c4300;
+    --alarm: #d03b3b; --alarm-bg: #fde4e2; --alarm-ink: #7a1414;
+    /* One colour per gauge, in the order of the controller channels; a ninth gauge starts again at the first. */
+    --g1: #2a78d6; --g2: #eb6834; --g3: #1baf7a; --g4: #eda100; --g5: #e87ba4; --g6: #008300; --g7: #6250d6; --g8: #e34948;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a19; --panel: #242423; --ink: #f0efec; --muted: #b5b4ab; --line: #3d3d3a; --bar: #2e2e2c; --grid: #30302e;
+      --live: #238636; --idle: #6e6e69; --off: #c9372c; --on-solid: #ffffff;
+      --warn: #fab219; --warn-bg: #3a2f08; --warn-ink: #ffe08a;
+      --alarm: #d03b3b; --alarm-bg: #3f1414; --alarm-ink: #ffc9c5;
+      --g1: #3987e5; --g2: #d95926; --g3: #199e70; --g4: #c98500; --g5: #d55181; --g6: #0ca30c; --g7: #9085e9; --g8: #e66767;
+      color-scheme: dark;
+    }
+  }
+
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.4 var(--font); }
+  [hidden] { display: none !important; }
+  .page { max-width: 1400px; margin: 0 auto; padding-block: 12px 32px;
+          padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  header, .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  h1 { margin: 0; font-size: 20px; }
+  h2 { margin: 28px 0 8px; font-size: 18px; }
+  small { color: var(--muted); font-weight: normal; font-size: 14px; }
+  .pill { padding: 1px 10px; border-radius: 10px; color: var(--on-solid); background: var(--idle); font-size: 14px; }
+  .pill.live { background: var(--live); }
+  .pill.off { background: var(--off); }
+
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  button { padding: 4px 12px; font: inherit; font-size: 14px; cursor: pointer; color: var(--ink); background: var(--panel);
+           border: 1px solid var(--line); border-radius: 4px; }
+  button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  button:focus-visible { outline: 2px solid var(--g1); outline-offset: 2px; }
+
+  /* The gas row shows the selection and takes no input, so its entries are not buttons. */
+  .gas { margin-top: 12px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+         display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .gas .label { font-weight: 600; }
+  .gas .choice { padding: 6px 12px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); border-radius: 4px; }
+  .gas .choice.on { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 600; }
+  .gas .choice.on::before { content: "\2713\00a0"; }
+  .gas .since { flex-basis: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .gas .hint { flex-basis: 100%; }
+
+  .bar { margin-top: 10px; padding: 8px 12px; background: var(--bar); border-radius: 4px; }
+  .bar.warn { background: var(--warn-bg); color: var(--warn-ink); border-left: 6px solid var(--warn); font-weight: 600; }
+  .bar.alarm { background: var(--alarm); color: var(--on-solid); font-weight: 600; }
+  .bar.closed { background: var(--off); color: var(--on-solid); font-weight: 600; }
+
+  .tiles { margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .tile { min-width: 0; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--line);
+          border-radius: 6px; display: flex; flex-direction: column; gap: 2px; }
+  .tile .name { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+  .nw { white-space: nowrap; }
+  .swatch { flex: none; width: 12px; height: 12px; border-radius: 2px; }
+  .tile .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tile .value span { font-size: 14px; font-weight: normal; color: var(--muted); }
+  .tile .line { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .tile .flag { font-size: 14px; font-weight: 600; }
+  .tile.warn { background: var(--warn-bg); border-color: var(--warn); }
+  .tile.warn .flag, .tile.warn .line { color: var(--warn-ink); }
+  .tile.alarm { background: var(--alarm-bg); border-color: var(--alarm); }
+  .tile.alarm .flag, .tile.alarm .line { color: var(--alarm-ink); }
+  .tile.dim .value { color: var(--muted); }
+  .tile.empty { background: none; border-style: dashed; }
+
+  .plot { width: 100%; overflow: hidden; }
+  .uplot { font-family: var(--font); }
+  .u-legend th, .u-legend td { border: 0; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>Chamber pressure</h1>
+    <span id="status" class="pill">Connecting</span>
+    <small id="clock"></small>
+  </header>
+
+  <div id="closed" class="bar closed" role="status" hidden></div>
+  <div id="alarm-bar" class="bar" role="status" hidden></div>
+  <div id="waiting" class="bar" role="status" hidden></div>
+
+  <section class="gas" aria-label="Gas species">
+    <span class="label">Gas</span>
+    <span class="seg" id="gases"></span>
+    <div class="since" id="gas-since"></div>
+    <small class="hint">The gas is chosen on the IOC's Linux host. This page only shows the choice.</small>
+  </section>
+
+  <section id="tiles" class="tiles" aria-label="Gauges"></section>
+
+  <h2>Last 5 minutes <small id="live-note">every reading, corrected for gas</small></h2>
+  <div class="row">
+    <button id="live-pause">Pause</button>
+    <small>Drag to zoom (the chart pauses), double-click to go back to live, click a legend entry to hide a gauge.</small>
+  </div>
+  <div id="live-plot" class="plot"></div>
+
+  <h2>History <small id="history-title">mean of each time bucket; host clock</small></h2>
+  <div class="row" id="history-controls">
+    <span class="seg" id="ranges"></span>
+    <span class="seg" id="views">
+      <button id="view-corrected" data-raw="0">Corrected for gas</button>
+      <button id="view-raw" data-raw="1">Gauge reading</button>
+    </span>
+  </div>
+  <div id="history-plot" class="plot"></div>
+  <small id="history-note"></small>
+</div>
+
+<script src="static/uPlot.iife.min.js"></script>
+<script src="static/session.js"></script>
+<script src="static/pressure_page.js"></script>
+</body>
+</html>

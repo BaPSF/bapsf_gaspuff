@@ -436,6 +436,7 @@ class IocTests(unittest.TestCase):
 	def test_records_over_ca_are_read_only(self):
 		self.assertEqual(self.value("G1:NAME"), "Test port")
 		self.assertEqual((self.value("G1:BASE.HIGH"), self.value("G1:BASE.HIHI")), (5e-6, 2e-5))
+		self.assertEqual(self.value("BASE_WINDOW_H"), 12.0)
 		base = self.read("G1:BASE")
 		self.assertTrue(math.isnan(base["value"]))  # no full minute yet
 		self.assertEqual(base["severity"], INVALID_ALARM)
