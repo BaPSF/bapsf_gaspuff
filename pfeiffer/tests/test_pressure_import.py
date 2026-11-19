@@ -146,6 +146,22 @@ class ImportTests(unittest.TestCase):
 			self.assertEqual(pressure_import.main(args), 1)
 		self.assertEqual([p.name for p in self.store.iterdir()], ["pressure_20250601.sqlite"])
 
+	def test_non_finite_pressures_and_string_gas_attributes_are_handled(self):
+		path = self.tmp / "pressure_data_2026-11-11.hdf5"
+		write_old(path, [T0 - 60, T0 - 59, T0 - 58], {
+			1: ([2e-6, np.inf, -np.inf], ["PKR"], ["Nitrogen"], [T0 - 3600]),
+			2: ([5e-3, 5e-3, np.nan], ["TPR", "IKR"], [99, np.nan], [T0 - 3600, np.nan]),
+		})
+		report = pressure_import.import_file(path, self.layout, self.store, now=LATER)
+		self.assertIsNone(report.skip)
+		r = pressure_db.read(self.store, T0 - 120, T0)
+		np.testing.assert_allclose(r.pressure["G1"], [2e-6, np.nan, np.nan])
+		self.assertEqual(pressure_db.stats(self.store, T0 - 120, T0, "G1").count, 1)
+		self.assertAlmostEqual(pressure_db.read_minutes(self.store, T0 - 120, T0).max["G1"][0], 2e-6)
+		with contextlib.closing(sqlite3.connect(pressure_db.day_path(self.store, "20261111"))) as db:
+			self.assertEqual(db.execute("SELECT model, device_gas FROM gauge WHERE key = 'G1'").fetchall(), [("PKR", "Nitrogen")])
+			self.assertEqual(db.execute("SELECT model, device_gas FROM gauge WHERE key = 'G2'").fetchall(), [("TPR", "code 99")])
+
 
 if __name__ == "__main__":
 	unittest.main()

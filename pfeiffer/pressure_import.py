@@ -30,6 +30,7 @@ Needs numpy and h5py; imports no EPICS library.
 import argparse
 import datetime
 import hashlib
+import math
 import socket
 import sys
 import tomllib
@@ -66,11 +67,13 @@ def load_layout(path):
 	if len(modules) != 1:
 		raise ValueError(f"{path}: expected one [[module]] with factory = {FACTORY!r}, found {len(modules)}")
 	(module,) = modules
+	if type(module.get("prefix")) is not str or not module["prefix"]:
+		raise ValueError(f"{path}: the pressure [[module]] has no prefix")
 	options = parse_options(module.get("options"), {tpg366.DRIVER: tpg366.CHANNELS})
 	(source,) = options.sources
 	if source.driver != tpg366.DRIVER:
 		raise ValueError(f"{path}: the old files hold TPG 366 readings, but source {source.key} uses the driver {source.driver}")
-	return Layout(str(module.get("prefix")), source.key, {g.channel: g for g in options.gauges if g.source == source.key})
+	return Layout(module["prefix"], source.key, {g.channel: g for g in options.gauges if g.source == source.key})
 
 
 #===================================================================================================================================================
@@ -96,6 +99,23 @@ def _texts(value):
 
 def _numbers(value):
 	return [float(v) for v in np.atleast_1d(value).tolist()]
+
+
+def _gas_name(value):
+	if isinstance(value, bytes):
+		value = value.decode("utf-8", "replace")
+	if isinstance(value, (int, np.integer)):
+		return tpg366.GAS_NAMES.get(int(value), f"code {int(value)}")
+	try:
+		code = float(value)
+	except (TypeError, ValueError):
+		text = str(value).strip()
+		return text or None
+	if not math.isfinite(code):
+		return None
+	if code.is_integer():
+		return tpg366.GAS_NAMES.get(int(code), f"code {int(code)}")
+	return str(value)
 
 
 def _open(path):
@@ -130,8 +150,9 @@ def read_old(path, trim=False):
 		for channel in channels:
 			dataset = group[str(channel)]
 			for name in (dataset.attrs.get("Unit"), group.attrs.get("unit")):
-				if name is not None and _texts(name)[0] != "Torr":
-					old.skip = f"channel {channel} is in {_texts(name)[0]}, not Torr"
+				units = _texts(name) if name is not None else []
+				if any(u != "Torr" for u in units):
+					old.skip = f"channel {channel} is in {units[0]}, not Torr"
 					return old
 			if len(dataset) < len(time_s) or (len(dataset) > len(time_s) and not trim):
 				lengths = ", ".join(f"channel {c} {len(group[str(c)])}" for c in channels)
@@ -141,10 +162,12 @@ def read_old(path, trim=False):
 			if len(dataset) > len(time_s):
 				old.trimmed[channel] = len(dataset) - len(time_s)
 			# float32 in the file: its shortest decimal is the number the controller sent (it sends 5 digits)
-			old.pressure[channel] = dataset[:len(time_s)].astype(str).astype(np.float64)
+			p = dataset[:len(time_s)].astype(str).astype(np.float64)
+			p[~np.isfinite(p)] = np.nan
+			old.pressure[channel] = p
 			models, gases, since = (dataset.attrs.get(name, []) for name in ("Model", "Gas", "Modified time"))
-			gases = [tpg366.GAS_NAMES.get(int(code), f"code {int(code)}") for code in _numbers(gases)]
-			old.history[channel] = list(zip(_numbers(since), _texts(models), gases))
+			gases = [_gas_name(v) for v in np.atleast_1d(gases).tolist()]
+			old.history[channel] = [(t, m, g) for t, m, g in zip(_numbers(since), _texts(models), gases) if math.isfinite(t)]
 	usable = np.isfinite(time_s) & (time_s > 0)
 	old.dropped = int(np.count_nonzero(~usable))
 	old.time = time_s[usable]
@@ -226,7 +249,7 @@ def import_file(path, layout, directory, timezone=pressure_db.TIMEZONE, write=Tr
 		return report
 
 	channels, keys = list(report.gauges), list(report.gauges.values())
-	sha256 = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+	sha256 = None
 	today = pressure_db.day_of(datetime.datetime.now().timestamp() if now is None else now, timezone)
 	for day, first, after in _days(float(old.time.min()), float(old.time.max()), timezone):
 		rows = (old.time >= first) & (old.time < after)
@@ -243,6 +266,9 @@ def import_file(path, layout, directory, timezone=pressure_db.TIMEZONE, write=Tr
 		if not write:
 			report.imported[day] = len(time_s)
 			continue
+		if sha256 is None:
+			with open(path, "rb") as f:
+				sha256 = hashlib.file_digest(f, "sha256").hexdigest()
 		meta = {"day": day, "time_zone": timezone, "host": socket.gethostname(), "prefix": layout.prefix, "software": f"pressure_import {VERSION}"}
 		file = pressure_db.DayFile(pressure_db.day_path(directory, day), meta)
 		try:
