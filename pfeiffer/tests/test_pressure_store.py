@@ -207,12 +207,12 @@ class StoreTests(unittest.TestCase):
 		store.on_pv("P:TPG1:ERROR", {"value": ""})
 		# Two gas selections in the same commit batch, plus a non-finite p_raw that must become NULL rather than Inf.
 		self.feed(store, group(4, t + 0.7, gas="Argon", g1=(math.inf, 0.8, 2, 2)))
-		store.on_pv("TEST:GAS:SPECIES", {"value": {"index": 2, "choices": choices}})
-		store.on_pv("TEST:GAS:SINCE", {"value": t + 0.65})
 		store.on_pv("TEST:GAS:BY", {"value": "alice"})
-		store.on_pv("TEST:GAS:SPECIES", {"value": {"index": 1, "choices": choices}})
-		store.on_pv("TEST:GAS:SINCE", {"value": t + 0.75})
+		store.on_pv("TEST:GAS:SINCE", {"value": t + 0.65})
+		store.on_pv("TEST:GAS:SPECIES", {"value": {"index": 2, "choices": choices}})
 		store.on_pv("TEST:GAS:BY", {"value": "bob"})
+		store.on_pv("TEST:GAS:SINCE", {"value": t + 0.75})
+		store.on_pv("TEST:GAS:SPECIES", {"value": {"index": 1, "choices": choices}})
 		self.feed(store, group(5, t + 0.8, gas="Hydrogen", g1=(2e-6, 2.4, 0, 0)))
 		with self.assertLogs("pressure_store", "WARNING"):
 			store.on_group(group(6, t + 0.9, g1=(2e-6, math.inf, 0, 0)))  # invalid gas_factor
