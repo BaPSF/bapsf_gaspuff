@@ -1,0 +1,9 @@
+#!/bin/sh
+# Show or select the gas in the machine, on the pressure IOC's own machine:
+#   lapd-gas          show the selection and the choices
+#   lapd-gas argon    select a gas
+# Install: install -m 0755 pfeiffer/deploy/bin/lapd-gas /usr/local/bin/lapd-gas
+# Who may select a gas is who may write the directory of the config's selection_file (README).
+# umask: the IOC, another account, must be able to read the file this writes.
+umask 022
+exec /opt/bapsf_gaspuff/.venv/bin/python /opt/bapsf_gaspuff/pfeiffer/pressure_gas.py --config /etc/diag-ioc/pressure.toml "$@"

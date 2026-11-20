@@ -85,7 +85,8 @@ A Linux pressure monitor (EPICS IOC, SQLite store, live web page) is being built
 | [pfeiffer/pressure_db.py](pfeiffer/pressure_db.py) | The layout of the day files and the functions that read them (`read`, `read_minutes`, `stats`, `history`, `events`). Needs only `numpy`. |
 | [pfeiffer/pressure_import.py](pfeiffer/pressure_import.py) | Copies the old logger's HDF5 files into the store's day files, once, so all pressure data is in one place. Needs `numpy` and `h5py`. |
 | [pfeiffer/pressure_web.py](pfeiffer/pressure_web.py) | The page: its own process, which shows the readings live and the store's files as history, read-only. Its files are in [pfeiffer/pressure_web_static/](pfeiffer/pressure_web_static/). |
-| [pfeiffer/deploy/systemd/](pfeiffer/deploy/systemd/) | Example systemd units: `diag-ioc@.service` (the IOC), `pressure-store.service`, `pressure-web.service`. Each lists its install steps. |
+| [pfeiffer/deploy/systemd/](pfeiffer/deploy/systemd/) | Example systemd units: `diag-ioc@.service` (the IOC) and its host drop-in `diag-ioc@pressure.site.conf.example`, `pressure-store.service`, `pressure-web.service`. Each lists its install steps. |
+| [pfeiffer/deploy/bin/](pfeiffer/deploy/bin/) | `lapd-gas`: shows or selects the gas on the IOC's machine (`pressure_gas.py` with the installed config). |
 | [pfeiffer/deploy/nginx/](pfeiffer/deploy/nginx/) | Example nginx site, the one way in to the page from the lab network, and its systemd drop-in. |
 | [pfeiffer/deploy/diag-ioc/](pfeiffer/deploy/diag-ioc/) | `pressure.toml.example`, the IOC's config with every key explained, and `readonly.acf`, which makes every PV read-only. |
 | [pfeiffer/tests/](pfeiffer/tests/) | Tests against the fake controller: `python -m unittest discover -s pfeiffer/tests`. |
@@ -118,6 +119,7 @@ PYTHONPATH=pfeiffer .venv/bin/python -m diag_ioc --config <config directory>/pre
 | `<P>:<G>:STATUS` | 0 ok, 1 underrange, 2 overrange, 3 sensor error, 4 off, 5 no gauge, 6 identification error, 7 other, 8 no reply from the controller. |
 | `<P>:<G>:RAW_STATUS` | The controller's own status code (-1 with status 8). |
 | `<P>:<G>:BASE` | Torr, base pressure: the lowest 1-minute mean of `P_RAW` in the last `base_window_h` hours. Its alarm limits are the gauge's `base_warning_torr` (MINOR) and `base_alarm_torr` (MAJOR). Invalid until the window holds `base_ready_min` minutes; the window starts empty at every IOC start. |
+| `<P>:BASE_WINDOW_H` | Hours `BASE` looks back: the config's `base_window_h`. |
 | `<P>:<G>:NAME`, `SOURCE`, `CHANNEL` | From the config: where the gauge sits, and its controller and channel. |
 | `<P>:<G>:MODEL`, `DEVICE_GAS`, `DEVICE_NAME` | As the controller reports them: gauge type, its own gas setting for the channel (MINOR alarm unless Nitrogen), the name stored in it. |
 | `<P>:<S>:SAMPLE` | PVA group: one update per reading with `seq`, `time`, `gas`, `read_s` and for each gauge `<g>.p`, `<g>.p_raw`, `<g>.gas_factor`, `<g>.status`, `<g>.raw_status`, `<g>.base`. |
@@ -208,6 +210,41 @@ PYTHONPATH=pfeiffer .venv/bin/python pfeiffer/pressure_web.py --config <config d
 - It writes nothing: no PV, no file. It monitors the PVA group and a few single PVs with `p4p`, and opens the day files read-only.
 - Limits, as on the interferometer page: 20 viewers in all, 3 pages per address, history requests rate-limited per address. A page that loses its connection says so and is reloaded by hand.
 - `PRESSURE_WEB_HOST` and `PRESSURE_WEB_PORT` change where it listens; nginx's `proxy_pass` must match.
+
+#### Installing on the Linux machine
+
+Every step in order, as root. The units list the same steps in their headers. Nothing here has been tried on the pressure machine yet.
+
+```bash
+# 1: the account, the checkout and its environment
+useradd --system --home-dir /var/lib/diag-ioc --no-create-home --shell /usr/sbin/nologin diag-ioc
+git clone https://github.com/BaPSF/bapsf_gaspuff.git /opt/bapsf_gaspuff          # root-owned; the services only read it
+cd /opt/bapsf_gaspuff && python3 -m venv .venv
+.venv/bin/pip install "bapsf-epics-core[ioc,clients] @ git+https://github.com/BaPSF/bapsf_epics_core.git@<tag>" \
+    fastapi uvicorn websockets -c pfeiffer/constraints.txt
+
+# 2: the IOC's config, read by the IOC, the store, the page and lapd-gas
+install -d /etc/diag-ioc && cp pfeiffer/deploy/diag-ioc/readonly.acf /etc/diag-ioc/
+install -m 0644 pfeiffer/deploy/diag-ioc/pressure.toml.example /etc/diag-ioc/pressure.toml   # then replace every <...>
+
+# 3: who may select the gas: the members of one group (the name is an example)
+groupadd --system lapd-gas && usermod -aG lapd-gas <operator account>
+install -d -o diag-ioc -g diag-ioc -m 0755 /var/lib/diag-ioc     # first: if root owned it, systemd would chown the next one to diag-ioc
+install -d -o root -g lapd-gas -m 2775 /var/lib/diag-ioc/pressure   # the directory of the config's selection_file
+install -m 0755 pfeiffer/deploy/bin/lapd-gas /usr/local/bin/lapd-gas
+
+# 4: the IOC, with the host drop-in that lets it reach only the controller on the instrument network
+cp pfeiffer/deploy/systemd/diag-ioc@.service /etc/systemd/system/
+install -D -m 0644 <filled-in diag-ioc@pressure.site.conf.example> /etc/systemd/system/diag-ioc@pressure.service.d/site.conf
+systemctl daemon-reload && systemctl enable --now diag-ioc@pressure
+
+# 5: the store, then the page, then nginx (its steps are at the top of pfeiffer/deploy/nginx/pressure.nginx.example)
+cp pfeiffer/deploy/systemd/pressure-store.service pfeiffer/deploy/systemd/pressure-web.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now pressure-store pressure-web
+```
+
+- `lapd-gas` shows the selection; `lapd-gas argon` selects a gas.
+- The controller's address is in two host files, `/etc/diag-ioc/pressure.toml` and the IOC unit's `site.conf`. Change both together.
 
 #### Tests
 

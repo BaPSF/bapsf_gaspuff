@@ -209,6 +209,7 @@ class PressureModule(DiagnosticModule):
 			"unit": text(f"{s}:UNIT", DESC="unit set on the controller"),
 		}
 		builder.aIn(f"{s}:PERIOD_S", initial_value=self.source.period_s, EGU="s", PREC=3, DESC="read period")
+		builder.aIn("BASE_WINDOW_H", initial_value=self.config.base_window_h, EGU="h", PREC=1, DESC="hours the base pressure looks back")
 		self._gauge_records = {}
 		for gauge in self.config.gauges:
 			k = gauge.key
