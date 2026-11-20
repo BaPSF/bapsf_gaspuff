@@ -70,6 +70,18 @@ The sensor to plot (`sensor_number`) and the rolling window length (`n_points`) 
 
 `h5py`, `numpy`, `portalocker`, `PyQt5`, `matplotlib`, and the HDF5 `h5clear` command-line tool (bundled with the HDF Group HDF5 distribution).
 
+### EPICS pressure monitor (in progress)
+
+A Linux pressure monitor (EPICS IOC, SQLite store, live web page) is being built next to the logger above, which stays unchanged as the reference. So far:
+
+| File | Purpose |
+|------|---------|
+| [pfeiffer/tpg366.py](pfeiffer/tpg366.py) | TPG 366 driver for the monitor: one connection kept open, read-only (`AYT`, `UNI`, `TID`, `GAS`, `CID`, `PRX`), pressures converted to Torr from the unit set on the controller, a status for every channel. Standard library only. |
+| [pfeiffer/fake_tpg366.py](pfeiffer/fake_tpg366.py) | Fake controller (a small TCP server with made-up values) for tests and for running without the instrument: `python pfeiffer/fake_tpg366.py --port 8000`. |
+| [pfeiffer/tests/](pfeiffer/tests/) | Driver tests against the fake controller: `python -m unittest discover -s pfeiffer/tests`. |
+
+The controller accepts one network client, so the old logger and the new monitor cannot read it at the same time.
+
 ---
 
 ## Gas-Puff Acquisition (overview)
