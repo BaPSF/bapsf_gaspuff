@@ -1,7 +1,13 @@
-# Exact versions of the EPICS stack the pressure IOC is tested with: the pins of bapsf_epics_core's constraints.txt.
+# Exact versions the pressure monitor is tested with. The EPICS stack: the pins of bapsf_epics_core's constraints.txt.
 # Install with: pip install "bapsf-epics-core[ioc,clients] @ git+https://github.com/BaPSF/bapsf_epics_core.git@<tag>" -c constraints.txt
 softioc==4.7.2
 epicscorelibs==7.0.10.99.0.2
 pvxslibs==1.5.3
 p4p==4.3.0
 pyepics==3.5.10
+# The page (pressure_web.py): the interferometer page's versions. starlette and websockets too, because /ws relies on how
+# they and uvicorn report a browser that left. Install with: pip install fastapi uvicorn websockets -c constraints.txt
+fastapi==0.162.0
+starlette==1.10.0
+uvicorn==0.54.0
+websockets==17.4

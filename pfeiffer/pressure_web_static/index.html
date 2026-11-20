@@ -1,0 +1,523 @@
+<!doctype html>
+<!-- Read-only page of pressure_web.py: the pressure IOC's readings live, and the store's day files as history. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chamber pressure</title>
+<link rel="stylesheet" href="static/uPlot.min.css">
+<style>
+  /* Colours: light and dark, as in the plan's demo. Gauge colours repeat after six gauges. */
+  :root {
+    --bg: #ffffff; --panel: #f4f5f7; --ink: #1c1c1c; --muted: #5f6368; --line: #d5d8dc; --bar: #e6e8eb; --grid: #e3e5e8;
+    --live: #1a7f37; --idle: #6b7075; --off: #b42318; --on-solid: #ffffff;
+    --warn: #fab219; --warn-bg: #fff4d6; --warn-ink: #5c4300;
+    --alarm: #d03b3b; --alarm-bg: #fde4e2; --alarm-ink: #7a1414;
+    --g1: #2a78d6; --g2: #eb6834; --g3: #1baf7a; --g4: #eda100; --g5: #8a5cd1; --g6: #0f8b8d;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1a1a19; --panel: #242423; --ink: #f0efec; --muted: #b5b4ab; --line: #3d3d3a; --bar: #2e2e2c; --grid: #30302e;
+      --live: #238636; --idle: #6e6e69; --off: #d03b3b; --on-solid: #ffffff;
+      --warn: #fab219; --warn-bg: #3a2f08; --warn-ink: #ffe08a;
+      --alarm: #d03b3b; --alarm-bg: #3f1414; --alarm-ink: #ffc9c5;
+      --g1: #3987e5; --g2: #d95926; --g3: #199e70; --g4: #c98500; --g5: #9b72e0; --g6: #24a3a6;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1a1a19; --panel: #242423; --ink: #f0efec; --muted: #b5b4ab; --line: #3d3d3a; --bar: #2e2e2c; --grid: #30302e;
+    --live: #238636; --idle: #6e6e69; --off: #d03b3b; --on-solid: #ffffff;
+    --warn: #fab219; --warn-bg: #3a2f08; --warn-ink: #ffe08a;
+    --alarm: #d03b3b; --alarm-bg: #3f1414; --alarm-ink: #ffc9c5;
+    --g1: #3987e5; --g2: #d95926; --g3: #199e70; --g4: #c98500; --g5: #9b72e0; --g6: #24a3a6;
+    color-scheme: dark;
+  }
+
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.4 var(--font); }
+  [hidden] { display: none !important; }
+  .page { max-width: 1400px; margin: 0 auto; padding-block: 12px 32px;
+          padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  header, .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  h1 { margin: 0; font-size: 20px; }
+  h2 { margin: 28px 0 8px; font-size: 18px; }
+  small { color: var(--muted); font-weight: normal; font-size: 14px; }
+  .pill { padding: 1px 10px; border-radius: 10px; color: var(--on-solid); background: var(--idle); font-size: 14px; }
+  .pill.live { background: var(--live); }
+  .pill.off { background: var(--off); }
+
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  button { padding: 4px 12px; font: inherit; font-size: 14px; cursor: pointer; color: var(--ink); background: var(--panel);
+           border: 1px solid var(--line); border-radius: 4px; }
+  button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  button:focus-visible { outline: 2px solid var(--g1); outline-offset: 2px; }
+
+  .bar { margin-top: 10px; padding: 8px 12px; background: var(--bar); border-radius: 4px; }
+  .bar.warn { background: var(--warn-bg); color: var(--warn-ink); border-left: 6px solid var(--warn); font-weight: 600; }
+  .bar.alarm, .bar.closed { background: var(--alarm); color: var(--on-solid); font-weight: 600; }
+
+  /* The gas row only shows the selection: it is made on the IOC's machine with pressure_gas.py. */
+  .gas { margin-top: 12px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+         display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .gas .label { font-weight: 600; }
+  .chip { padding: 5px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--muted); }
+  .chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 600; }
+  .chip.on::before { content: "\2713\00a0"; }
+  .gas .since { flex-basis: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .gas small { flex-basis: 100%; }
+
+  .tiles { margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+  .tile { min-width: 0; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--line);
+          border-radius: 6px; display: flex; flex-direction: column; gap: 2px; }
+  .tile .name { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+  .nw { white-space: nowrap; }
+  .swatch { flex: none; width: 12px; height: 12px; border-radius: 2px; }
+  .tile .value { font-size: 22px; line-height: 1.25; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .line { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .tile .flag { font-size: 14px; font-weight: 600; }
+  .tile.warn { background: var(--warn-bg); border-color: var(--warn); }
+  .tile.warn .flag, .tile.warn .line { color: var(--warn-ink); }
+  .tile.alarm { background: var(--alarm-bg); border-color: var(--alarm); }
+  .tile.alarm .flag, .tile.alarm .line { color: var(--alarm-ink); }
+  .tile.dim .value { color: var(--muted); }
+
+  .plot { width: 100%; overflow: hidden; }
+  .uplot { font-family: var(--font); }
+  .u-legend { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>Chamber pressure</h1>
+    <span id="status" class="pill">Connecting</span>
+    <small id="clock"></small>
+  </header>
+
+  <div id="closed" class="bar closed" role="alert" hidden></div>
+  <div id="link" class="bar" role="status" hidden></div>
+  <div id="alarm-bar" class="bar" role="status" hidden></div>
+
+  <section class="gas" aria-label="Gas in the machine">
+    <span class="label">Gas</span>
+    <span class="seg" id="gases"></span>
+    <div class="since" id="gas-since"></div>
+    <small>Selected on the IOC's machine (pressure_gas.py). This page only shows the selection. Each gauge has its own
+      multiplier for each gas, shown on its tile.</small>
+  </section>
+
+  <section id="tiles" class="tiles" aria-label="Gauges"></section>
+
+  <h2>Last 5 minutes <small>every reading, corrected for gas</small></h2>
+  <div class="row">
+    <button id="live-pause">Pause</button>
+    <small>Drag to zoom, double-click to reset, click a legend entry to hide a gauge.</small>
+  </div>
+  <div id="live-plot" class="plot"></div>
+
+  <h2>History <small>from the store's files; IOC machine clock, Los Angeles time</small></h2>
+  <div class="row">
+    <span class="seg" id="ranges"></span>
+    <span class="seg" id="views">
+      <button id="view-corrected" data-raw="0">Corrected for gas</button>
+      <button id="view-raw" data-raw="1">Gauge reading</button>
+    </span>
+  </div>
+  <div id="history-plot" class="plot"></div>
+  <small id="history-note"></small>
+</div>
+
+<script src="static/uPlot.iife.min.js"></script>
+<script src="static/session.js"></script>
+<script>
+"use strict";
+
+const HOUR = 3600, DAY = 86400;
+const RANGES = [["1 h", HOUR], ["8 h", 8 * HOUR], ["24 h", DAY], ["7 d", 7 * DAY], ["30 d", 30 * DAY]];
+const HISTORY_REFRESH_S = [5, 60];  // the history chart reloads once per bucket, within these bounds
+const STATUS_WITH_VALUE = [0, 1, 2];  // ok, underrange, overrange: the gauge sent a pressure
+const DEVICE_GAS = "Nitrogen";  // the controller's own gas setting must stay here, or the reading is corrected twice
+
+let info = null, ZONE = "America/Los_Angeles";
+let hostOffset = 0;      // IOC machine clock minus this browser's clock, s
+let lastStatus = null;
+let closed = false;
+
+const byId = id => document.getElementById(id);
+const token = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const SUPERSCRIPT = {"-": "⁻", "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹"};
+const power = e => "10" + String(e).split("").map(c => SUPERSCRIPT[c]).join("");
+function sci(v) {
+  if (v == null || !Number.isFinite(v)) return "--";
+  if (v === 0) return "0";
+  const [m, e] = v.toExponential(2).split("e");
+  return `${m.replace("-", "−")} × ${power(Number(e))}`;
+}
+const hostNow = () => Date.now() / 1e3 + hostOffset;
+const clockText = (s, withDate) => new Date(s * 1e3).toLocaleString("en-US", {timeZone: ZONE, hour12: false,
+  ...(withDate ? {month: "short", day: "numeric"} : {}), hour: "2-digit", minute: "2-digit", second: withDate ? undefined : "2-digit"});
+const gaugeColor = i => `--g${(i % 6) + 1}`;
+
+//===============================================================================================================================================
+// Tiles, gas row and bars
+
+function limitState(gauge, base) {
+  if (base == null) return "";
+  if (gauge.alarm != null && base >= gauge.alarm) return "alarm";  // >=, as the BASE record's HIHI and HIGH limits
+  if (gauge.warning != null && base >= gauge.warning) return "warn";
+  return "";
+}
+
+function renderTiles(s) {
+  const waiting = !s || s.waiting;
+  const levels = [];
+  byId("tiles").innerHTML = info.gauges.map((gauge, i) => {
+    const g = (s && s.gauges[gauge.key]) || {};
+    const statusText = g.status == null ? "no reading yet" : (info.status_text[g.status] ?? `status ${g.status}`);
+    const hasValue = STATUS_WITH_VALUE.includes(g.status) && g.p != null;
+    const prefix = g.status === 1 ? "< " : g.status === 2 ? "> " : "";
+    const level = limitState(gauge, g.base);
+    if (level) levels.push([level, gauge, g.base]);
+    const flag = level === "alarm" ? `<div class="flag">■ Base pressure alarm</div>`
+      : level === "warn" ? `<div class="flag">▲ Base pressure high</div>` : "";
+    const deviceGas = g.device_gas && g.device_gas !== DEVICE_GAS
+      ? `<div class="flag">▲ Controller gas setting is ${escapeHtml(g.device_gas)}, not ${DEVICE_GAS}</div>` : "";
+    const limit = gauge.warning == null && gauge.alarm == null ? "no limit set"
+      : level === "alarm" ? `alarm limit <span class="nw">${sci(gauge.alarm)}</span>`
+      : level === "warn" ? `warning limit <span class="nw">${sci(gauge.warning)}</span>`
+      : `✓ below <span class="nw">${sci(gauge.warning ?? gauge.alarm)}</span>`;
+    const base = g.base == null ? `not ready yet (needs ${info.base_ready_min} min of readings after an IOC start)` : `<span class="nw">${sci(g.base)}</span>`;
+    const reads = hasValue
+      ? `Gauge reads <span class="nw">${prefix}${sci(g.p_raw)}</span> <span class="nw">× ${g.gas_factor?.toFixed(2) ?? "--"}</span>` : "";
+    return `<div class="tile ${level} ${!hasValue || waiting ? "dim" : ""}" id="tile-${escapeHtml(gauge.key)}">
+      <div class="name"><span class="swatch" style="background: var(${gaugeColor(i)})"></span>${escapeHtml(gauge.key)}</div>
+      <div class="line">${escapeHtml(gauge.name)}</div>
+      <div class="value">${hasValue ? `<span class="nw">${prefix}${sci(g.p)}</span> <small>Torr</small>` : "no value"}</div>
+      <div class="line">${escapeHtml(statusText)}${g.model ? " · " + escapeHtml(g.model) : ""}${reads ? "<br>" + reads : ""}</div>
+      ${flag}${deviceGas}
+      <div class="line">Base, ${info.base_window_h} h: ${base}<br>${limit}</div>
+    </div>`;
+  }).join("");
+
+  const bar = byId("alarm-bar");
+  const worst = levels.some(([level]) => level === "alarm") ? "alarm" : "warn";
+  bar.hidden = levels.length === 0;
+  bar.className = "bar " + worst;
+  bar.innerHTML = levels.map(([level, gauge, base]) => level === "alarm"
+    ? `■ Base pressure alarm on ${escapeHtml(gauge.key)}: <span class="nw">${sci(base)} Torr</span>, alarm limit <span class="nw">${sci(gauge.alarm)} Torr</span>.`
+    : `▲ Base pressure high on ${escapeHtml(gauge.key)}: <span class="nw">${sci(base)} Torr</span>, warning limit <span class="nw">${sci(gauge.warning)} Torr</span>.`
+  ).join("<br>");
+}
+
+function renderGas(s) {
+  const gas = s ? s.gas : {};
+  for (const chip of byId("gases").children) {
+    const on = chip.dataset.gas === gas.species;
+    chip.classList.toggle("on", on);
+    chip.setAttribute("aria-current", on ? "true" : "false");
+  }
+  if (!gas.species) {
+    byId("gas-since").textContent = "Selection not known yet.";
+    return;
+  }
+  const since = gas.since ? ` since ${clockText(gas.since, true)}` : "";
+  const by = gas.by === "(default)" ? ", the default: nobody has selected a gas" : gas.by ? `, selected by ${gas.by}` : "";
+  byId("gas-since").textContent = `${gas.species}${since}${by}.`;
+}
+
+function renderStatus(s) {
+  const pill = byId("status"), link = byId("link");
+  if (closed) return;
+  const live = s && !s.waiting && s.ioc;
+  pill.textContent = live ? "Live" : s ? "Waiting" : "Connecting";
+  pill.className = "pill" + (live ? " live" : "");
+  let text = "";
+  if (s && !s.ioc) text = "The pressure IOC cannot be reached: no readings.";
+  else if (s && s.connected === false) text = `The gauge controller does not answer${s.error ? ": " + s.error : ""}. The IOC keeps trying.`;
+  else if (s && s.waiting) text = s.sample ? `Waiting for readings: the last one came ${Math.round(s.age_s)} s ago, at ${clockText(s.sample.time)}.`
+    : "Waiting for the first reading.";
+  link.hidden = !text;
+  link.className = "bar" + (s && (!s.ioc || s.connected === false) ? " warn" : "");
+  link.textContent = text;
+}
+
+function tickClock() {
+  byId("clock").textContent = `IOC machine clock ${clockText(hostNow())}, Los Angeles time`;
+}
+
+//===============================================================================================================================================
+// Charts
+
+let colors, livePlot = null, historyPlot = null, livePaused = false;
+let live = null;               // columns: [t, gas index, p of each gauge]
+let history = null;            // the last api/history answer, plus the range asked
+let rangeSeconds = DAY, rawView = false, historyZoomed = false, historyTimer = null;
+
+const plotHeight = () => window.innerWidth < 600 ? 260 : 340;
+const decades = (u, splits) => splits.map(v => {
+  const e = Math.log10(v);
+  return Math.abs(e - Math.round(e)) < 1e-6 ? power(Math.round(e)) : "";
+});
+const tzDate = ts => uPlot.tzDate(new Date(ts * 1e3), ZONE);
+const positive = v => v != null && v > 0 ? v : null;  // a log axis cannot show 0
+
+function axes(label) {
+  const common = {stroke: colors.muted, grid: {stroke: colors.grid, width: 1}, ticks: {stroke: colors.grid, width: 1}};
+  return [common, {...common, label, size: 64, values: decades}];
+}
+const gaugeSeries = () => info.gauges.map((g, i) => ({label: g.key, stroke: colors[`g${(i % 6) + 1}`], width: 2,
+  points: {show: false}, spanGaps: false, value: (u, v) => sci(v)}));
+
+// Dotted vertical lines with the gas name at each change of gas inside the chart.
+function gasChangeHook(changes) {
+  return u => {
+    const ratio = window.devicePixelRatio || 1, {ctx, bbox} = u, {min, max} = u.scales.x;
+    ctx.save();
+    for (const [t, species] of changes()) {
+      if (!(t > min && t < max)) continue;
+      const x = Math.round(u.valToPos(t, "x", true));
+      ctx.strokeStyle = colors.muted;
+      ctx.lineWidth = ratio;
+      ctx.setLineDash([2 * ratio, 3 * ratio]);
+      ctx.beginPath();
+      ctx.moveTo(x, bbox.top);
+      ctx.lineTo(x, bbox.top + bbox.height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const room = x < bbox.left + bbox.width - 90 * ratio;
+      ctx.fillStyle = colors.ink;
+      ctx.font = `${12 * ratio}px system-ui, sans-serif`;
+      ctx.textAlign = room ? "left" : "right";
+      ctx.textBaseline = "top";
+      ctx.fillText(species, x + (room ? 5 : -5) * ratio, bbox.top + 4 * ratio);
+    }
+    ctx.restore();
+  };
+}
+
+function liveGasChanges() {
+  const changes = [], t = live[0], gas = live[1];
+  for (let i = 1; i < t.length; i++) if (gas[i] !== gas[i - 1] && gas[i] >= 0) changes.push([t[i], info.species[gas[i]]]);
+  return changes;
+}
+const historyGasChanges = () => history ? history.gas.slice(1) : [];
+
+// The base-pressure limits, on the gauge reading only: BASE is compared before the multiplier.
+// Only for the gauges shown: a click on a legend entry hides a gauge and its limits.
+const limitLines = u => rawView ? info.gauges.flatMap((g, i) => !u || u.series[i + 1].show
+  ? [[g.warning, colors.warn, `${g.key} warning limit`], [g.alarm, colors.alarm, `${g.key} alarm limit`]] : [])
+  .filter(([value]) => value != null) : [];
+function drawLimits(u) {
+  const ratio = window.devicePixelRatio || 1, {ctx, bbox} = u, labels = [], gap = 15 * ratio;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(bbox.left, bbox.top, bbox.width, bbox.height);
+  ctx.clip();
+  for (const [value, color, text] of limitLines(u).sort((a, b) => b[0] - a[0])) {
+    const y = Math.round(u.valToPos(value, "y", true));
+    let labelY = y - 3 * ratio;  // above its line, moved up while it would overlap a label already placed
+    while (labels.some(other => Math.abs(other - labelY) < gap)) labelY -= gap;
+    labels.push(labelY);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5 * ratio;
+    ctx.setLineDash([6 * ratio, 4 * ratio]);
+    ctx.beginPath();
+    ctx.moveTo(bbox.left, y);
+    ctx.lineTo(bbox.left + bbox.width, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = colors.ink;
+    ctx.font = `${12 * ratio}px system-ui, sans-serif`;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(text, bbox.left + bbox.width - 6 * ratio, labelY);
+  }
+  ctx.restore();
+}
+
+function liveData() {
+  return [live[0], ...info.gauges.map((g, i) => live[2 + i])];
+}
+
+function historyData() {
+  const empty = [[], ...info.gauges.map(() => [])];
+  if (!history) return empty;
+  const width = history.width || (history.range / history.points), out = empty;
+  history.t.forEach((t, i) => {
+    if (i > 0 && t - history.t[i - 1] > 1.5 * width) {  // buckets without readings: a gap, not a line across
+      out[0].push(history.t[i - 1] + width);
+      info.gauges.forEach((g, k) => out[k + 1].push(null));
+    }
+    out[0].push(t + width / 2);
+    info.gauges.forEach((g, k) => out[k + 1].push(positive(history.gauges[g.key]?.mean[i])));
+  });
+  return out;
+}
+
+function buildPlots() {
+  colors = Object.fromEntries(["ink", "muted", "grid", "warn", "alarm", "g1", "g2", "g3", "g4", "g5", "g6"].map(n => [n, token(`--${n}`)]));
+  if (livePlot) livePlot.destroy();
+  if (historyPlot) historyPlot.destroy();
+  historyZoomed = false;
+  const base = {height: plotHeight(), tzDate, legend: {live: true}};
+  livePlot = new uPlot({...base, width: byId("live-plot").clientWidth, scales: {y: {distr: 3}}, axes: axes("Pressure (Torr)"),
+                        series: [{label: "Time"}, ...gaugeSeries()], hooks: {draw: [gasChangeHook(liveGasChanges)]}},
+                       liveData(), byId("live-plot"));
+  const withLimits = (u, min, max) => {
+    const values = limitLines(u).map(([value]) => value);
+    if (min == null || max == null) [min, max] = values.length ? [Math.min(...values), Math.max(...values)] : [1e-9, 1e3];
+    return uPlot.rangeLog(Math.min(min, ...values.map(v => v / 2)), Math.max(max, ...values), 10, true);
+  };
+  historyPlot = new uPlot({...base, width: byId("history-plot").clientWidth, scales: {y: {distr: 3, range: withLimits}},
+                           axes: axes(rawView ? "Gauge reading (Torr)" : "Pressure (Torr)"),
+                           series: [{label: "Time"}, ...gaugeSeries()],
+                           hooks: {draw: [drawLimits, gasChangeHook(historyGasChanges)],
+                                   setSelect: [u => { if (u.select.width > 0) historyZoomed = true; }]}},
+                          historyData(), byId("history-plot"));
+  historyPlot.over.addEventListener("dblclick", () => { historyZoomed = false; });
+}
+
+//===============================================================================================================================================
+// Data in
+
+function onFrame(frame) {
+  const s = frame.status;
+  hostOffset = s.now - Date.now() / 1e3;
+  if (frame.kind === "live") live = [[], [], ...info.gauges.map(() => [])];
+  for (const row of frame.rows) {
+    live[0].push(row[0]);
+    live[1].push(row[1]);
+    info.gauges.forEach((g, i) => live[2 + i].push(positive(row[2 + i])));
+  }
+  const newest = live[0].length ? live[0][live[0].length - 1] : 0;
+  const cut = live[0].findIndex(t => t >= newest - info.live_s);
+  if (cut > 0) live.forEach(column => column.splice(0, cut));
+  if (!livePaused && (frame.rows.length || frame.kind === "live")) livePlot.setData(liveData());
+  lastStatus = s;
+  renderStatus(s);
+  renderGas(s);
+  renderTiles(s);
+  tickClock();
+}
+
+function onClosed(note, reason) {
+  closed = true;
+  const bar = byId("closed");
+  bar.hidden = false;
+  bar.textContent = reason ? `${note}. The server said: ${reason}` : note;
+  const pill = byId("status");
+  pill.textContent = "Disconnected";
+  pill.className = "pill off";
+  byId("link").hidden = true;
+  clearTimeout(historyTimer);
+}
+
+async function loadHistory() {
+  clearTimeout(historyTimer);
+  const points = Math.max(100, Math.min(info.history_points_max, Math.round(byId("history-plot").clientWidth || 600)));
+  const end = Math.ceil(hostNow()), start = end - rangeSeconds;
+  const range = rangeSeconds, raw = rawView;
+  let ok = false;
+  try {
+    const response = await fetch(`api/history?start=${start}&end=${end}&points=${points}&raw=${raw ? 1 : 0}`);
+    if (!response.ok) throw new Error(`${response.status} ${(await response.json().catch(() => ({}))).detail ?? response.statusText}`);
+    const answer = await response.json();
+    if (range !== rangeSeconds || raw !== rawView) return;  // the choice changed while this was under way
+    history = {...answer, range, points};
+    if (!historyZoomed) historyPlot.setData(historyData());
+    noteHistory();
+    ok = true;
+  } catch (error) {
+    byId("history-note").textContent = `History not loaded: ${error.message}. It is tried again shortly.`;
+  }
+  const delay = ok ? Math.min(HISTORY_REFRESH_S[1], Math.max(HISTORY_REFRESH_S[0], history.width || (rangeSeconds / points))) : HISTORY_REFRESH_S[0];
+  if (!closed) historyTimer = setTimeout(loadHistory, 1e3 * delay);
+}
+
+function noteHistory() {
+  const source = history.from === "readings" ? "Mean of the readings in each time bucket."
+    : "Mean of the 1-minute summaries in each time bucket; the minute in progress is not in them yet.";
+  const limits = rawView ? (limitLines(historyPlot).length ? " Dashed lines are the base-pressure limits." : "")
+    : " Base-pressure limits apply to the gauge reading; choose \"Gauge reading\" to see them.";
+  const empty = history.t.length === 0 ? " No readings stored in this range." : "";
+  byId("history-note").textContent = `${source}${limits} Dotted lines mark a change of gas.${empty}`;
+}
+
+function chooseHistory() {
+  for (const b of byId("ranges").children) b.classList.toggle("on", Number(b.dataset.seconds) === rangeSeconds);
+  for (const b of byId("views").children) b.classList.toggle("on", (b.dataset.raw === "1") === rawView);
+  historyZoomed = false;
+  history = null;
+  buildPlots();
+  loadHistory();
+}
+
+//===============================================================================================================================================
+// Start
+
+async function start() {
+  try {
+    const response = await fetch("api/info");
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    info = await response.json();
+  } catch (error) {
+    onClosed(`The page could not start: ${error.message}. Reload to try again`, "");
+    return;
+  }
+  ZONE = info.time_zone;
+  live = [[], [], ...info.gauges.map(() => [])];
+  for (const species of info.species) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = species;
+    chip.dataset.gas = species;
+    byId("gases").append(chip);
+  }
+  for (const [label, seconds] of RANGES) {
+    const b = document.createElement("button");
+    b.id = `range-${seconds}`;
+    b.textContent = label;
+    b.dataset.seconds = seconds;
+    b.onclick = () => { rangeSeconds = seconds; chooseHistory(); };
+    byId("ranges").append(b);
+  }
+  for (const b of byId("views").children) b.onclick = () => { rawView = b.dataset.raw === "1"; chooseHistory(); };
+  byId("live-pause").onclick = () => {
+    livePaused = !livePaused;
+    byId("live-pause").textContent = livePaused ? "Resume" : "Pause";
+    byId("live-pause").classList.toggle("on", livePaused);
+    if (!livePaused) livePlot.setData(liveData());
+  };
+  renderGas(null);
+  renderTiles(null);
+  renderStatus(null);
+
+  const url = new URL("ws", location.href);
+  url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  PressureSession.openSession({url: url.href, WebSocket, document, timers: window, now: () => performance.now(), onFrame, onClosed});
+  chooseHistory();
+  setInterval(() => {
+    tickClock();
+    if (lastStatus && !closed && lastStatus.sample) {  // the waiting note counts up between frames too
+      renderStatus({...lastStatus, age_s: hostNow() - lastStatus.sample.time, waiting: lastStatus.waiting || hostNow() - lastStatus.sample.time >= info.waiting_after_s});
+    }
+  }, 1000);
+
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      livePlot.setSize({width: byId("live-plot").clientWidth, height: plotHeight()});
+      historyPlot.setSize({width: byId("history-plot").clientWidth, height: plotHeight()});
+    }, 150);
+  });
+  const rebuild = () => { buildPlots(); };
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", rebuild);
+}
+
+start();
+</script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+# /etc/nginx/sites-available/diagnostic (enabled by a symlink in sites-enabled) on the pressure machine; the machine
+# keeps the real file, with its lab address in place of <lab address>. Pages under http://<lab address>/diagnostic/<name>/.
+# pressure_web listens on 127.0.0.1 only; this proxy is the one way in from the lab network. The same layout as the
+# interferometer machine's (bapsf_interferometer deploy/nginx/): on a machine that serves both, put both locations in
+# one server block.
+# Install as root from /opt/bapsf_gaspuff (not yet tried on the pressure machine):
+#   systemctl mask nginx                  # before apt, so Debian's default site never starts on 0.0.0.0:80
+#   apt install nginx && dpkg -l nginx    # the state must read ii
+#   rm /etc/nginx/sites-enabled/default
+#   install -m 0644 <the machine's copy of this file> /etc/nginx/sites-available/diagnostic
+#   ln -s /etc/nginx/sites-available/diagnostic /etc/nginx/sites-enabled/diagnostic
+#   install -D -m 0644 pfeiffer/deploy/nginx/nginx.site.conf /etc/systemd/system/nginx.service.d/site.conf
+#   nginx -t
+#   systemctl unmask nginx && systemctl daemon-reload && systemctl enable --now nginx
+
+# WebSocket upgrade: "upgrade" when the browser asks for it, otherwise a normal keep-alive-less request.
+map $http_upgrade $connection_upgrade {
+	default upgrade;
+	''      close;
+}
+
+# Requests in progress per viewer address. Generous on purpose: pressure_web's own caps (3 pages per address, 20 in all)
+# refuse first and say why; this only stops one PC flooding plain requests from taking all of its 80 connections.
+limit_conn_zone $binary_remote_addr zone=diag_per_address:1m;
+
+server {
+	# The lab network's address only, never 0.0.0.0: the instrument network must not reach it.
+	listen <lab address>:80;
+	server_name _;
+	server_tokens off;
+	limit_conn diag_per_address 20;
+	limit_conn_status 429;
+	# The page is read-only (GET and WebSocket); nothing needs a request body.
+	client_max_body_size 1k;
+
+	# Without the trailing slash the page's relative links (static/, api/, ws) would resolve under /diagnostic/.
+	location = /diagnostic/pressure {
+		return 301 /diagnostic/pressure/;
+	}
+
+	location /diagnostic/pressure/ {
+		# The trailing slash strips the prefix: /diagnostic/pressure/ws reaches pressure_web as /ws.
+		proxy_pass http://127.0.0.1:8081/;
+		proxy_http_version 1.1;
+		proxy_set_header Upgrade $http_upgrade;
+		proxy_set_header Connection $connection_upgrade;
+		proxy_set_header Host $host;
+		# The viewer's own address, replacing anything the browser sent: pressure_web's per-address limits count against
+		# it. pressure_web reads this header from 127.0.0.1 only (server_settings).
+		proxy_set_header X-Forwarded-For $remote_addr;
+		# pressure_web pings every 30 s and drops a dead peer after 60 s more; 90 s covers a quiet socket.
+		proxy_read_timeout 90s;
+		proxy_send_timeout 90s;
+		# Frames go straight through, never held in nginx's buffers.
+		proxy_buffering off;
+		# Every page asks for the history every few seconds: one line each would fill the log. Errors still go to error.log.
+		access_log off;
+	}
+
+	# Nothing else is served.
+	location / {
+		return 404;
+	}
+}

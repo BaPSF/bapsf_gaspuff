@@ -1,0 +1,52 @@
+# The pressure IOC as a system unit: `systemctl enable --now diag-ioc@pressure` runs diag_ioc with
+# /etc/diag-ioc/pressure.toml (deploy/diag-ioc/pressure.toml.example, filled in on the machine). One instance per config.
+# Install as root, on the machine that reads the gauge controller (the controller takes one client):
+#   useradd --system --home-dir /var/lib/diag-ioc --no-create-home --shell /usr/sbin/nologin diag-ioc   # if not there yet
+#   git clone https://github.com/BaPSF/bapsf_gaspuff.git /opt/bapsf_gaspuff   # root-owned; the services only read it
+#   cd /opt/bapsf_gaspuff && python3 -m venv .venv
+#   .venv/bin/pip install "bapsf-epics-core[ioc,clients] @ git+https://github.com/BaPSF/bapsf_epics_core.git@<tag>" -c pfeiffer/constraints.txt
+#   install -d /etc/diag-ioc && cp pfeiffer/deploy/diag-ioc/readonly.acf /etc/diag-ioc/
+#   install -m 0644 pfeiffer/deploy/diag-ioc/pressure.toml.example /etc/diag-ioc/pressure.toml   # then replace every <...>
+#   # 0644: the store, the page and pressure_gas.py (run by the people who select the gas) read it too
+#   # The gas selection file's directory: written by the people who select the gas (pressure_gas.py), read by the IOC.
+#   # /var/lib/diag-ioc first, owned by diag-ioc: if root owned it, systemd would chown everything below it at the IOC's
+#   # start, the gas directory included, and the people who select the gas could no longer write it.
+#   install -d -o diag-ioc -g diag-ioc -m 0755 /var/lib/diag-ioc
+#   install -d -m 2775 -o root -g <group of the people who select the gas> /var/lib/diag-ioc/pressure
+#   install -m 0755 pfeiffer/deploy/bin/lapd-gas /usr/local/bin/lapd-gas   # lapd-gas [species]: show or select the gas
+#   cp pfeiffer/deploy/systemd/diag-ioc@.service /etc/systemd/system/
+#   install -D -m 0644 <the host's copy of diag-ioc@pressure.site.conf.example> /etc/systemd/system/diag-ioc@pressure.service.d/site.conf
+#   systemctl daemon-reload && systemctl enable --now diag-ioc@pressure
+# Log: journalctl -u diag-ioc@pressure. The host drop-in (diag-ioc@pressure.site.conf.example) holds only what differs
+# per machine: IPAddressDeny= / IPAddressAllow= so that on the instrument network the IOC reaches only this controller.
+# EPICS_CAS_INTF_ADDR_LIST and EPICS_PVAS_INTF_ADDR_LIST go in /etc/diag-ioc/pressure.env.
+# Not yet run on a machine: at the first start, check the log for the controller's model and caget LAPD:MACH:PRESSURE:G1:P.
+[Unit]
+Description=diag_ioc EPICS IOC (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# diag-ioc, a system account with no login, shared with the store and the page. Never root (as root EPICS locks all
+# memory in RAM).
+User=diag-ioc
+Group=diag-ioc
+WorkingDirectory=/opt/bapsf_gaspuff
+# The pressure module (pressure_ioc.py) and the drivers are flat modules in pfeiffer/.
+Environment=PYTHONPATH=/opt/bapsf_gaspuff/pfeiffer
+Environment=PYTHONUNBUFFERED=1
+# EPICS_* settings, e.g. EPICS_CAS_INTF_ADDR_LIST, EPICS_PVAS_INTF_ADDR_LIST.
+EnvironmentFile=-/etc/diag-ioc/%i.env
+ExecStart=/opt/bapsf_gaspuff/.venv/bin/python -m diag_ioc --config /etc/diag-ioc/%i.toml
+# /var/lib/diag-ioc, kept across stops: the config's db_dir, where the IOC writes <name>.db (every PV) at each start.
+# The gas selection directory inside it is root's (install step above); the IOC only reads it.
+StateDirectory=diag-ioc
+# SIGTERM: the reader closes the controller connection and the IOC exits within a few seconds.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
