@@ -1,0 +1,58 @@
+# The pressure IOC. Copy to /etc/diag-ioc/pressure.toml on the IOC machine and replace every <...> placeholder:
+# the IOC refuses to start while one is left, and names its key. The filled-in file holds this machine's
+# addresses and limits and is never committed. Relative paths are relative to this file.
+# Run: python -m diag_ioc --config /etc/diag-ioc/pressure.toml, with pfeiffer/ on PYTHONPATH.
+
+[ioc]
+name = "LAPD:MACH:PRESSURE:IOC"  # devIocStats prefix: LAPD:MACH:PRESSURE:IOC:HEARTBEAT, ...
+db_dir = "/var/lib/diag-ioc"     # pressure.db (every PV) is written here at each start
+acf = "readonly.acf"             # every PV read-only over CA and PVA; copy it from this directory
+
+[[module]]
+name = "pressure"
+factory = "pressure_ioc:PressureModule"
+prefix = "LAPD:MACH:PRESSURE"
+stale_seconds = 3       # STAT:STALE after this long without a sample
+timing_log = false      # no log line per sample: 10 a second is 864,000 lines a day
+
+[module.options]
+base_window_h = 12      # <gauge>:BASE is the lowest 1-minute mean of the last 12 hours
+base_ready_min = 10     # BASE is invalid until the window holds this many minutes (it starts empty at every IOC start)
+
+[module.options.gas]
+prefix = "LAPD:MACH:GAS"    # LAPD:MACH:GAS:SPECIES, :SINCE, :BY
+species = ["Helium", "Hydrogen", "Argon", "Nitrogen"]
+default = "Helium"          # the selection until someone selects a gas with pressure_gas.py
+# Written by pressure_gas.py, read by the IOC. Who may write this directory may select the gas.
+selection_file = "/var/lib/diag-ioc/pressure/gas_species"
+
+# One controller. This version reads exactly one source.
+[[module.options.source]]
+key = "TPG1"            # PVs LAPD:MACH:PRESSURE:TPG1:...
+driver = "tpg366"
+address = "<controller address>:8000"
+period_s = 0.1          # one reading every 100 ms
+# timeout_s = 2.0       # wait for the connection and for each reply
+
+# One table per gauge. The key names the gauge's PVs (LAPD:MACH:PRESSURE:G1:P) and stays with the gauge if it
+# moves to another channel or controller.
+[[module.options.gauge]]
+key = "G1"
+source = "TPG1"
+channel = 1             # channel on the controller, 1 to 6
+name = "<where the gauge sits>"
+# Optional. Compared with BASE, the gauge's own reading before the multiplier: warning is a MINOR alarm, alarm MAJOR.
+base_warning_torr = "<limit>"
+base_alarm_torr = "<limit>"
+
+# This gauge only: pressure shown = gauge reading x multiplier of the selected gas. One for every species listed
+# above. The controller's own gas setting for the channel must stay on Nitrogen.
+[module.options.gauge.multiplier]
+Helium = "<multiplier>"
+Hydrogen = "<multiplier>"
+Argon = "<multiplier>"
+Nitrogen = 1.0
+
+# [[module.options.gauge]]
+# key = "G2"
+# ... the next gauge, with its own multiplier table
