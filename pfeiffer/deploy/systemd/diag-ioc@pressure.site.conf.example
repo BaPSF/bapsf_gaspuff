@@ -1,0 +1,8 @@
+# The pressure IOC's host drop-in: /etc/systemd/system/diag-ioc@pressure.service.d/site.conf. The host keeps the real
+# file, with its own addresses in place of the <...> placeholders; it is never committed.
+[Service]
+# The IOC is the gauge controller's one client. On the instrument network it may reach the controller and nothing
+# else; an allowed address wins over a denied network. The controller's address is also in /etc/diag-ioc/pressure.toml:
+# change both together.
+IPAddressDeny=<instrument network, e.g. 192.0.2.0/24>
+IPAddressAllow=<controller address>

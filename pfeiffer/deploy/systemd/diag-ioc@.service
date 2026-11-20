@@ -9,13 +9,17 @@
 #   install -m 0644 pfeiffer/deploy/diag-ioc/pressure.toml.example /etc/diag-ioc/pressure.toml   # then replace every <...>
 #   # 0644: the store, the page and pressure_gas.py (run by the people who select the gas) read it too
 #   # The gas selection file's directory: written by the people who select the gas (pressure_gas.py), read by the IOC.
+#   # /var/lib/diag-ioc first, owned by diag-ioc: if root owned it, systemd would chown everything below it at the IOC's
+#   # start, the gas directory included, and the people who select the gas could no longer write it.
+#   install -d -o diag-ioc -g diag-ioc -m 0755 /var/lib/diag-ioc
 #   install -d -m 2775 -o root -g <group of the people who select the gas> /var/lib/diag-ioc/pressure
-#   cp pfeiffer/deploy/systemd/diag-ioc@.service /etc/systemd/system/ && systemctl daemon-reload
-#   systemctl enable --now diag-ioc@pressure
-# Log: journalctl -u diag-ioc@pressure. A host drop-in (/etc/systemd/system/diag-ioc@pressure.service.d/site.conf) holds
-# only what differs per machine, e.g. EPICS_CAS_INTF_ADDR_LIST and EPICS_PVAS_INTF_ADDR_LIST in /etc/diag-ioc/pressure.env,
-# and IPAddressDeny= / IPAddressAllow= so the IOC reaches only the lab subnet, localhost and this controller's address on
-# the instrument network.
+#   install -m 0755 pfeiffer/deploy/bin/lapd-gas /usr/local/bin/lapd-gas   # lapd-gas [species]: show or select the gas
+#   cp pfeiffer/deploy/systemd/diag-ioc@.service /etc/systemd/system/
+#   install -D -m 0644 <the host's copy of diag-ioc@pressure.site.conf.example> /etc/systemd/system/diag-ioc@pressure.service.d/site.conf
+#   systemctl daemon-reload && systemctl enable --now diag-ioc@pressure
+# Log: journalctl -u diag-ioc@pressure. The host drop-in (diag-ioc@pressure.site.conf.example) holds only what differs
+# per machine: IPAddressDeny= / IPAddressAllow= so that on the instrument network the IOC reaches only this controller.
+# EPICS_CAS_INTF_ADDR_LIST and EPICS_PVAS_INTF_ADDR_LIST go in /etc/diag-ioc/pressure.env.
 # Not yet run on a machine: at the first start, check the log for the controller's model and caget LAPD:MACH:PRESSURE:G1:P.
 [Unit]
 Description=diag_ioc EPICS IOC (%i)
