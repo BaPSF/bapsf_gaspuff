@@ -72,7 +72,7 @@ The sensor to plot (`sensor_number`) and the rolling window length (`n_points`) 
 
 ### EPICS pressure monitor (in progress)
 
-A Linux pressure monitor (EPICS IOC, SQLite store, live web page) is being built next to the logger above, which stays unchanged as the reference. The store and the page are not written yet. So far:
+A Linux pressure monitor (EPICS IOC, SQLite store, live web page) is being built next to the logger above, which stays unchanged as the reference. The page is not written yet. So far:
 
 | File | Purpose |
 |------|---------|
@@ -81,6 +81,9 @@ A Linux pressure monitor (EPICS IOC, SQLite store, live web page) is being built
 | [pfeiffer/pressure_ioc.py](pfeiffer/pressure_ioc.py) | The IOC module. It reads the controller every 100 ms and publishes each reading as EPICS PVs. It runs inside the `diag_ioc` host of [bapsf_epics_core](https://github.com/BaPSF/bapsf_epics_core). |
 | [pfeiffer/pressure_config.py](pfeiffer/pressure_config.py) | Checks the IOC module's options. A wrong value or a placeholder left in place stops the IOC at start and names the key. |
 | [pfeiffer/pressure_gas.py](pfeiffer/pressure_gas.py) | The gas selection: the command that selects the gas in the machine, and the file it writes. |
+| [pfeiffer/pressure_store.py](pfeiffer/pressure_store.py) | The store: its own process, which saves every reading the IOC publishes in one SQLite file per day. |
+| [pfeiffer/pressure_db.py](pfeiffer/pressure_db.py) | The layout of the day files and the functions that read them (`read`, `read_minutes`, `stats`, `history`, `events`). Needs only `numpy`. |
+| [pfeiffer/deploy/systemd/pressure-store.service](pfeiffer/deploy/systemd/pressure-store.service) | Example systemd unit for the store. |
 | [pfeiffer/deploy/diag-ioc/](pfeiffer/deploy/diag-ioc/) | `pressure.toml.example`, the IOC's config with every key explained, and `readonly.acf`, which makes every PV read-only. |
 | [pfeiffer/tests/](pfeiffer/tests/) | Tests against the fake controller: `python -m unittest discover -s pfeiffer/tests`. |
 
@@ -138,6 +141,36 @@ python pfeiffer/pressure_gas.py --config /etc/diag-ioc/pressure.toml argon    # 
 - `SINCE` is the file's modification time and `BY` is its owner, so both come from the operating system.
 - Until someone selects a gas, the selection is the config's `default`.
 - The controller's own gas setting must stay on Nitrogen for every channel. Otherwise the reading is corrected twice.
+
+#### The store
+
+`pressure_store.py` saves every reading in `pressure_YYYYMMDD.sqlite`, one file per day in Los Angeles time. The files are the only record of the pressure. It is a separate process that only reads PVs, so trouble with the disk never reaches the IOC.
+
+```bash
+PYTHONPATH=pfeiffer .venv/bin/python pfeiffer/pressure_store.py --config <config directory>/pressure.toml --dir <store directory>
+```
+
+- `--config` is the IOC's own config file: the store takes the prefix, the source and the gauges from it. Restart the store after the file changes.
+- It monitors the PVA group `<P>:<S>:SAMPLE` with `p4p`, so every reading arrives as one complete update, and commits once a second.
+- Each row holds the reading as the gauge sent it (`p_raw`), the status, and the number of its row in the `setting` table: the gas and each gauge's multiplier. A change of gas adds a setting row and never rewrites a reading, so a wrong selection can be put right later.
+- A jump in the IOC's sample counter is recorded as an event with the number of readings missed. Lost and regained connections, gauge status changes, gas changes and starts and stops are events too.
+- If a commit fails (a full disk), the store tries again every second and keeps up to 10 minutes of readings in memory meanwhile.
+- The store directory must be on a local disk. Six gauges at 10 readings a second are about 90 MB a day.
+- A file that the store has closed (at the day change, or when it stops) is one plain file that any account can read and copy. The file being written has a `-wal` and a `-shm` file beside it: copy it with `sqlite3 <file> ".backup <copy>"`, not with `cp`.
+
+Reading, from Python (`numpy` only), while the store is running or not:
+
+```python
+import pressure_db
+
+r = pressure_db.read("<store directory>", start, end)          # every reading: r.time, r.pressure["G1"], r.status["G1"]
+m = pressure_db.read_minutes("<store directory>", start, end)  # 1-minute summaries: m.time, m.min["G1"], m.mean["G1"], m.max["G1"]
+s = pressure_db.stats("<store directory>", start, end, "G1")   # count, min, mean, max, first, last, change
+```
+
+- `start` and `end` are epoch seconds or aware `datetime` objects. A range may span days; a day without a file is skipped.
+- Pressures are Torr, corrected for the gas (`P_RAW` x multiplier). `corrected=False` returns the gauge's own reading.
+- The same data with the `sqlite3` command: `SELECT time, p_raw_g1, status_g1 FROM sample_tpg1 WHERE time >= <epoch s>`. The docstring of [pfeiffer/pressure_db.py](pfeiffer/pressure_db.py) lists every table.
 - `BASE` and its limits use `P_RAW`, so a limit does not move when the selection changes.
 
 #### Tests
